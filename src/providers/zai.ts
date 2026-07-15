@@ -53,55 +53,27 @@ function tokenWindowLabel(unit?: number, number?: number): string {
 
 function mapLimit(limit: ZaiLimit, index: number): UsageWindow | null {
   const type = limit.type || "UNKNOWN";
-  if (type === "TOKENS_LIMIT") {
-    const usedPercent =
-      limit.percentage != null
-        ? clampPercent(limit.percentage)
-        : limit.usage && limit.currentValue != null
-          ? clampPercent((limit.currentValue / limit.usage) * 100)
-          : undefined;
-    const resetsAt = isoFromEpochMs(limit.nextResetTime);
-    return {
-      id: `tokens-${limit.unit ?? index}-${limit.number ?? 0}`,
-      label: tokenWindowLabel(limit.unit, limit.number),
-      usedPercent,
-      remainingPercent:
-        usedPercent != null ? clampPercent(100 - usedPercent) : undefined,
-      used: limit.currentValue,
-      limit: limit.usage,
-      remaining: limit.remaining,
-      resetsAt,
-      resetAfterSeconds: secondsUntil(resetsAt),
-    };
-  }
+  if (type !== "TOKENS_LIMIT") return null;
 
-  if (type === "TIME_LIMIT") {
-    const usedPercent =
-      limit.percentage != null
-        ? clampPercent(limit.percentage)
-        : limit.usage && limit.currentValue != null
-          ? clampPercent((limit.currentValue / limit.usage) * 100)
-          : undefined;
-    const resetsAt = isoFromEpochMs(limit.nextResetTime);
-    return {
-      id: `tools-${limit.unit ?? index}`,
-      label: "Tools/Search",
-      usedPercent,
-      remainingPercent:
-        usedPercent != null ? clampPercent(100 - usedPercent) : undefined,
-      used: limit.currentValue,
-      limit: limit.usage,
-      remaining: limit.remaining,
-      resetsAt,
-      resetAfterSeconds: secondsUntil(resetsAt),
-      note:
-        limit.usage != null && limit.currentValue != null
-          ? `${limit.currentValue}/${limit.usage} calls`
-          : undefined,
-    };
-  }
-
-  return null;
+  const usedPercent =
+    limit.percentage != null
+      ? clampPercent(limit.percentage)
+      : limit.usage && limit.currentValue != null
+        ? clampPercent((limit.currentValue / limit.usage) * 100)
+        : undefined;
+  const resetsAt = isoFromEpochMs(limit.nextResetTime);
+  return {
+    id: `tokens-${limit.unit ?? index}-${limit.number ?? 0}`,
+    label: tokenWindowLabel(limit.unit, limit.number),
+    usedPercent,
+    remainingPercent:
+      usedPercent != null ? clampPercent(100 - usedPercent) : undefined,
+    used: limit.currentValue,
+    limit: limit.usage,
+    remaining: limit.remaining,
+    resetsAt,
+    resetAfterSeconds: secondsUntil(resetsAt),
+  };
 }
 
 export async function fetchZai(auth: AuthFile): Promise<ProviderStatus> {

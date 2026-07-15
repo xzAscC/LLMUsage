@@ -15,7 +15,7 @@ describe("fetchZai", () => {
     expect(r.error).toMatch(/No zai-coding-plan/i);
   });
 
-  test("maps token and tool limits", async () => {
+  test("maps token limits and skips tool usage", async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("quota/limit")) {
@@ -36,10 +36,10 @@ describe("fetchZai", () => {
                   type: "TIME_LIMIT",
                   unit: 5,
                   number: 1,
-                  percentage: 0,
+                  percentage: 99,
                   usage: 4000,
-                  currentValue: 0,
-                  remaining: 4000,
+                  currentValue: 3960,
+                  remaining: 40,
                 },
               ],
             },
@@ -65,6 +65,8 @@ describe("fetchZai", () => {
     expect(r.plan).toBe("GLM Coding Max");
     expect(r.usedPercent).toBe(11);
     expect(r.windows.some((w) => w.label.includes("Session"))).toBe(true);
+    expect(r.windows.some((w) => /Tools|Search/i.test(w.label))).toBe(false);
+    expect(r.windows.some((w) => w.id.startsWith("tools-"))).toBe(false);
     expect(JSON.stringify(r)).not.toMatch(/SECRET_ZAI_KEY/);
   });
 });
