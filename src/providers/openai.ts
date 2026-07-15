@@ -1,8 +1,12 @@
 import {
   chatgptAccountId,
-  getOAuth,
   type AuthFile,
+  type OAuthCredential,
 } from "../auth.ts";
+import {
+  ensureFreshOAuth,
+  refreshOpenAIOAuth,
+} from "../oauth-refresh.ts";
 import { finalizeProvider } from "../severity.ts";
 import type { ProviderStatus, UsageWindow } from "../types.ts";
 import {
@@ -59,44 +63,71 @@ function mapWindow(
   };
 }
 
+async function fetchWham(oauth: OAuthCredential): Promise<WhamResponse> {
+  const accountId = chatgptAccountId(oauth);
+  if (!accountId) {
+    throw new Error("Missing ChatGPT account id on OAuth token");
+  }
+  return fetchJson<WhamResponse>("https://chatgpt.com/backend-api/wham/usage", {
+    headers: {
+      Authorization: `Bearer ${oauth.access}`,
+      "ChatGPT-Account-Id": accountId,
+      "User-Agent": "llm-usage/0.1 (Hyprland)",
+      Accept: "application/json",
+    },
+  });
+}
+
 export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  const oauth = getOAuth(auth, ["openai", "codex", "chatgpt"]);
-  if (!oauth) {
+  let oauth: OAuthCredential | null;
+  try {
+    oauth = await ensureFreshOAuth(
+      auth,
+      ["openai", "codex", "chatgpt"],
+      refreshOpenAIOAuth,
+      "openai",
+    );
+  } catch (err) {
     return finalizeProvider({
       id: "openai",
       name: "OpenAI",
       ok: false,
-      error: "No OpenAI OAuth in OpenCode auth.json (need ChatGPT Plus/Pro login)",
+      error: err instanceof Error ? err.message : String(err),
       windows: [],
       fetchedAt: now,
     });
   }
 
-  const accountId = chatgptAccountId(oauth);
-  if (!accountId) {
+  if (!oauth) {
     return finalizeProvider({
       id: "openai",
       name: "OpenAI",
       ok: false,
-      error: "Missing ChatGPT account id on OAuth token",
+      error:
+        "No OpenAI OAuth in OpenCode auth.json (run: opencode auth login)",
       windows: [],
       fetchedAt: now,
     });
   }
 
   try {
-    const body = await fetchJson<WhamResponse>(
-      "https://chatgpt.com/backend-api/wham/usage",
-      {
-        headers: {
-          Authorization: `Bearer ${oauth.access}`,
-          "ChatGPT-Account-Id": accountId,
-          "User-Agent": "llm-usage/0.1 (Hyprland)",
-          Accept: "application/json",
-        },
-      },
-    );
+    let body: WhamResponse;
+    try {
+      body = await fetchWham(oauth);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("401") && !msg.includes("token_expired")) throw err;
+      oauth = await ensureFreshOAuth(
+        auth,
+        ["openai", "codex", "chatgpt"],
+        refreshOpenAIOAuth,
+        "openai",
+        true,
+      );
+      if (!oauth) throw err;
+      body = await fetchWham(oauth);
+    }
 
     const windows: UsageWindow[] = [];
     const primary = mapWindow(
@@ -132,11 +163,14 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
       fetchedAt: now,
     });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     return finalizeProvider({
       id: "openai",
       name: "OpenAI",
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: msg.includes("401") || msg.includes("token_expired")
+        ? "OpenAI token expired — refresh failed. Run: opencode auth login"
+        : msg,
       windows: [],
       fetchedAt: now,
     });
