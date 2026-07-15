@@ -1,56 +1,60 @@
 # llm-usage
 
-Local-only subscription usage monitor for **OpenAI (ChatGPT)** / **GLM (Z.AI Coding Plan)** / **Grok (xAI)** via OpenCode credentials.
+Local-only subscription usage for **OpenAI (ChatGPT)** / **GLM (Z.AI Coding Plan)** / **Grok (xAI)** via OpenCode credentials.
 
-Designed for **Arch + Hyprland + Quickshell (ii)**.
+**Arch + Hyprland + Quickshell (ii)**. No global npm/bun package install.
 
-## Requirements
-
-- [Bun](https://bun.sh) on PATH (runtime only; no global npm packages)
-- OpenCode logins in `~/.local/share/opencode/auth.json`:
-  - `openai` — ChatGPT OAuth (`/connect` ChatGPT Plus/Pro)
-  - `zai-coding-plan` — API key
-  - `xai` — OAuth
-
-## CLI (project-local)
+## CLI (project-local only)
 
 ```bash
 ./bin/llm-usage status      # human table
 ./bin/llm-usage json        # structured snapshot
-./bin/llm-usage waybar      # Waybar custom module JSON
-./bin/llm-usage notify      # notify-send if usage high
-./bin/llm-usage status --force
+./bin/llm-usage waybar      # Waybar JSON
+./bin/llm-usage notify      # notify-send if high
 ```
 
-Cache (only write location): `~/.cache/llm-usage/snapshot.json`  
-**Never stores tokens** — only percentages, plan names, reset times.
+Requires system `bun` on PATH as a runtime (like `python`). Does **not** install packages globally.
 
-## Tests
+Credentials: `~/.local/share/opencode/auth.json` only  
+Cache write: `~/.cache/llm-usage/snapshot.json` only (percentages, never tokens)
+
+## Tests (TDD)
 
 ```bash
 bun test
 ```
 
-## Quickshell bar widget
+## Quickshell bar (click for details)
 
-```bash
-bash install.sh   # symlinks into ~/.config/quickshell/ii (no global install)
+Self-contained widget lives **in this repo**:
+
+`integrations/quickshell/bar/LlmUsageBar.qml`
+
+BarContent loads it with a `Loader` (absolute `file://` path) so Quickshell module type registration is not required.
+
+**Minimal host change** (already applied if you used this machine’s setup):
+
+```qml
+Loader {
+    id: llmUsageLoader
+    active: root.useShortenedForm < 2
+    Layout.alignment: Qt.AlignVCenter
+    Layout.preferredWidth: item ? item.implicitWidth : 0
+    Layout.preferredHeight: item ? item.implicitHeight : 0
+    source: "file:///home/xzascc/Documents/code/LLMUsage/integrations/quickshell/bar/LlmUsageBar.qml"
+}
 ```
 
-Then ensure:
+- **Click** — 3-column popup (OpenAI / GLM / Grok)
+- **Right-click** — force refresh
+- **Ring number** — worst usage % across providers
 
-1. `Config.options.bar.llmUsage.enable` is `true` (default)
-2. `BarContent.qml` includes `LlmUsageBar` next to `Resources` (done by install docs / patch)
+Reload Quickshell: `killall qs; qs -c ii &` (or your dots-hyprland restart bind).
 
-**Bar:** single ring = worst usage % across providers  
-**Click:** open 3-column popup (OpenAI / GLM / Grok)  
-**Right-click:** force refresh  
-
-Reload Quickshell (e.g. `Ctrl+Super+R` on dots-hyprland, or restart `qs -c ii`).
+If you move the repo, edit the `projectRoot` / Loader `source` path inside the QML.
 
 ## Local-only policy
 
-- No `npm install -g`
-- No system package for this app
-- Credentials only from OpenCode auth file
-- Project path hardcoded in QS service: edit `integrations/quickshell/services/LlmUsage.qml` if you move the repo
+- No `npm i -g` / no AUR package for this app
+- No tokens written to cache
+- Prefer changes inside this directory; Quickshell only needs the one Loader line
