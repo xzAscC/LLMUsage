@@ -118,9 +118,14 @@ Item { // Bar content region
                 Layout.fillWidth: root.useShortenedForm === 2
             }
 
-            LlmUsageBar {
-                visible: (Config.options?.bar?.llmUsage?.enable ?? true) && root.useShortenedForm < 2
+            // LLMUsage project: self-contained bar chip (local path, no global install)
+            Loader {
+                id: llmUsageLoader
+                active: root.useShortenedForm < 2
                 Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: item ? item.implicitWidth : 0
+                Layout.preferredHeight: item ? item.implicitHeight : 0
+                source: "file:///home/xzascc/Documents/code/LLMUsage/integrations/quickshell/bar/LlmUsageBar.qml"
             }
 
             Media {
