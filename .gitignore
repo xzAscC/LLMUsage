@@ -1,0 +1,8 @@
+.omo/
+.bun/
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+*.bak
