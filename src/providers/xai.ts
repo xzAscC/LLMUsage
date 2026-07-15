@@ -1,4 +1,5 @@
-import { getOAuth, type AuthFile } from "../auth.ts";
+import { type AuthFile, type OAuthCredential } from "../auth.ts";
+import { ensureFreshOAuth, refreshXaiOAuth } from "../oauth-refresh.ts";
 import { finalizeProvider } from "../severity.ts";
 import type { ProviderStatus, UsageWindow } from "../types.ts";
 import {
@@ -49,9 +50,36 @@ function periodLabel(type?: string): string {
   return "Period";
 }
 
+function grokHeaders(oauth: OAuthCredential): Record<string, string> {
+  return {
+    Authorization: `Bearer ${oauth.access}`,
+    "X-XAI-Token-Auth": "xai-grok-cli",
+    Accept: "application/json",
+    "User-Agent": "llm-usage/0.1 (Hyprland)",
+  };
+}
+
 export async function fetchXai(auth: AuthFile): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  const oauth = getOAuth(auth, ["xai", "grok"]);
+  let oauth: OAuthCredential | null;
+  try {
+    oauth = await ensureFreshOAuth(
+      auth,
+      ["xai", "grok"],
+      refreshXaiOAuth,
+      "xai",
+    );
+  } catch (err) {
+    return finalizeProvider({
+      id: "xai",
+      name: "Grok / xAI",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      windows: [],
+      fetchedAt: now,
+    });
+  }
+
   if (!oauth) {
     return finalizeProvider({
       id: "xai",
@@ -63,25 +91,38 @@ export async function fetchXai(auth: AuthFile): Promise<ProviderStatus> {
     });
   }
 
-  const headers = {
-    Authorization: `Bearer ${oauth.access}`,
-    "X-XAI-Token-Auth": "xai-grok-cli",
-    Accept: "application/json",
-    "User-Agent": "llm-usage/0.1 (Hyprland)",
-  };
-
   try {
-    const [billing, settings] = await Promise.all([
-      // Official SuperGrok weekly pool (matches grok.com "每周 SuperGrok 限额")
-      fetchJson<GrokBillingResponse>(
-        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-        { headers },
-      ),
-      fetchJson<GrokSettingsResponse>(
-        "https://cli-chat-proxy.grok.com/v1/settings",
-        { headers },
-      ).catch(() => null),
-    ]);
+    const fetchAll = async (token: OAuthCredential) => {
+      const headers = grokHeaders(token);
+      return Promise.all([
+        fetchJson<GrokBillingResponse>(
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+          { headers },
+        ),
+        fetchJson<GrokSettingsResponse>(
+          "https://cli-chat-proxy.grok.com/v1/settings",
+          { headers },
+        ).catch(() => null),
+      ] as const);
+    };
+
+    let billing: GrokBillingResponse;
+    let settings: GrokSettingsResponse | null;
+    try {
+      [billing, settings] = await fetchAll(oauth);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("401") && !msg.includes("token_expired")) throw err;
+      oauth = await ensureFreshOAuth(
+        auth,
+        ["xai", "grok"],
+        refreshXaiOAuth,
+        "xai",
+        true,
+      );
+      if (!oauth) throw err;
+      [billing, settings] = await fetchAll(oauth);
+    }
 
     const cfg = billing.config || {};
     const windows: UsageWindow[] = [];
@@ -146,11 +187,14 @@ export async function fetchXai(auth: AuthFile): Promise<ProviderStatus> {
       fetchedAt: now,
     });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     return finalizeProvider({
       id: "xai",
       name: "Grok / xAI",
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: msg.includes("401") || msg.includes("token_expired")
+        ? "xAI token expired — refresh failed. Run: opencode auth login"
+        : msg,
       windows: [],
       fetchedAt: now,
     });
