@@ -87,14 +87,15 @@ MouseArea {
             root.refresh()
             return
         }
-        root.popupOpen = !root.popupOpen
+        root.popupOpen = true
     }
 
-    // click-toggle proxy for StyledPopup (active binds to containsMouse)
+    onExited: root.popupOpen = false
+
     Item {
         id: popupAnchor
         anchors.fill: parent
-        property bool containsMouse: root.popupOpen
+        property bool containsMouse: root.popupOpen && root.containsMouse
     }
 
     RowLayout {
