@@ -13,6 +13,7 @@ import {
   clampPercent,
   fetchJson,
   isoFromEpochSec,
+  secondsUntil,
 } from "../util.ts";
 
 interface WhamWindow {
@@ -36,6 +37,21 @@ interface WhamResponse {
     balance?: string;
     overage_limit_reached?: boolean;
   };
+  rate_limit_reset_credits?: {
+    available_count?: number;
+  };
+}
+
+interface ResetCreditItem {
+  status?: string;
+  expires_at?: string;
+  title?: string;
+}
+
+interface ResetCreditsResponse {
+  available_count?: number;
+  total_earned_count?: number;
+  credits?: ResetCreditItem[];
 }
 
 function windowLabel(seconds: number | undefined, fallback: string): string {
@@ -63,19 +79,77 @@ function mapWindow(
   };
 }
 
-async function fetchWham(oauth: OAuthCredential): Promise<WhamResponse> {
+function authHeaders(oauth: OAuthCredential): Record<string, string> {
   const accountId = chatgptAccountId(oauth);
   if (!accountId) {
     throw new Error("Missing ChatGPT account id on OAuth token");
   }
+  return {
+    Authorization: `Bearer ${oauth.access}`,
+    "ChatGPT-Account-Id": accountId,
+    "User-Agent": "llm-usage/0.1 (Hyprland)",
+    Accept: "application/json",
+  };
+}
+
+async function fetchWham(oauth: OAuthCredential): Promise<WhamResponse> {
   return fetchJson<WhamResponse>("https://chatgpt.com/backend-api/wham/usage", {
-    headers: {
-      Authorization: `Bearer ${oauth.access}`,
-      "ChatGPT-Account-Id": accountId,
-      "User-Agent": "llm-usage/0.1 (Hyprland)",
-      Accept: "application/json",
-    },
+    headers: authHeaders(oauth),
   });
+}
+
+async function fetchResetCredits(
+  oauth: OAuthCredential,
+): Promise<ResetCreditsResponse | null> {
+  try {
+    return await fetchJson<ResetCreditsResponse>(
+      "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+      { headers: authHeaders(oauth) },
+    );
+  } catch {
+    return null;
+  }
+}
+
+function mapResetCredits(
+  wham: WhamResponse,
+  detail: ResetCreditsResponse | null,
+): UsageWindow | null {
+  const count =
+    detail?.available_count ??
+    wham.rate_limit_reset_credits?.available_count ??
+    0;
+
+  const available = (detail?.credits || []).filter(
+    (c) => (c.status || "").toLowerCase() === "available" && c.expires_at,
+  );
+  available.sort(
+    (a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!),
+  );
+  const soonest = available[0]?.expires_at;
+
+  if (count <= 0 && !soonest) {
+    return {
+      id: "rate-resets",
+      label: "Resets",
+      note: "0 available",
+    };
+  }
+
+  const parts: string[] = [`${count} available`];
+  if (soonest) {
+    const d = new Date(soonest);
+    const md = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    parts.push(`next exp ${md}`);
+  }
+
+  return {
+    id: "rate-resets",
+    label: "Resets",
+    note: parts.join(" · "),
+    resetsAt: soonest,
+    resetAfterSeconds: secondsUntil(soonest),
+  };
 }
 
 export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
@@ -113,8 +187,12 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
 
   try {
     let body: WhamResponse;
+    let resets: ResetCreditsResponse | null = null;
     try {
-      body = await fetchWham(oauth);
+      [body, resets] = await Promise.all([
+        fetchWham(oauth),
+        fetchResetCredits(oauth),
+      ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("401") && !msg.includes("token_expired")) throw err;
@@ -126,7 +204,10 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
         true,
       );
       if (!oauth) throw err;
-      body = await fetchWham(oauth);
+      [body, resets] = await Promise.all([
+        fetchWham(oauth),
+        fetchResetCredits(oauth),
+      ]);
     }
 
     const windows: UsageWindow[] = [];
@@ -153,6 +234,9 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
           : `balance ${body.credits.balance}`,
       });
     }
+
+    const resetWin = mapResetCredits(body, resets);
+    if (resetWin) windows.push(resetWin);
 
     return finalizeProvider({
       id: "openai",
