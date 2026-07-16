@@ -59,11 +59,13 @@ export function finalizeSnapshot(
     .map((p) => p.usedPercent)
     .filter((n): n is number => typeof n === "number");
   const worst = nums.length ? Math.max(...nums) : undefined;
-  let severity: Severity = providers.some((p) => !p.ok)
-    ? "error"
-    : severityFromPercent(worst, thresholds);
-  for (const p of providers) {
-    severity = worseSeverity(severity, p.severity);
+  let severity: Severity = severityFromPercent(worst, thresholds);
+  if (providers.length > 0 && providers.every((p) => !p.ok)) {
+    severity = "error";
+  } else {
+    for (const p of providers) {
+      if (p.ok) severity = worseSeverity(severity, p.severity);
+    }
   }
   return {
     fetchedAt: new Date().toISOString(),

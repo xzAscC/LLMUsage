@@ -4,6 +4,7 @@ import type { UsageSnapshot } from "./types.ts";
 import { fetchOpenAI } from "./providers/openai.ts";
 import { fetchZai } from "./providers/zai.ts";
 import { fetchXai } from "./providers/xai.ts";
+import { fetchAnthropic } from "./providers/anthropic.ts";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { cacheDir, cacheSnapshotPath } from "./paths.ts";
 
@@ -13,6 +14,7 @@ export async function collectUsage(): Promise<UsageSnapshot> {
     fetchOpenAI(auth),
     fetchZai(auth),
     fetchXai(auth),
+    fetchAnthropic(auth),
   ]);
   const snapshot = finalizeSnapshot(providers);
   saveSnapshot(snapshot);

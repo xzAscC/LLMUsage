@@ -21,6 +21,8 @@ No Electron, no cloud account, no global npm install. Just Bun + your existing O
   Session (5h) + weekly **token** quotas (tool/search usage ignored)
 - **Grok / xAI**  
   **Weekly SuperGrok** pool (same meter as the grok.com usage UI)
+- **Claude Code**  
+  Session 5h + weekly windows from `api/oauth/usage` (reads `~/.claude/.credentials.json`)
 - **Auto OAuth refresh** for OpenAI & xAI; tokens written back to OpenCode `auth.json`
 - **Local cache only**: `~/.cache/llm-usage/snapshot.json` (percentages — never tokens)
 - **Tests**: `bun test`
@@ -33,7 +35,8 @@ No Electron, no cloud account, no global npm install. Just Bun + your existing O
 - [OpenCode](https://opencode.ai) with providers connected:
   - OpenAI → ChatGPT Plus/Pro OAuth
   - `zai-coding-plan` → API key
-  - xAI → OAuth  
+  - xAI → OAuth
+  - Claude Code → `claude auth login` (or OpenCode Anthropic OAuth)
 - Optional UI: [Hyprland](https://hyprland.org) + [Quickshell](https://quickshell.outfoxxed.me) (e.g. dots-hyprland `ii`)
 
 ---
