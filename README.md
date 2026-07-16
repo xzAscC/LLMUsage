@@ -118,3 +118,22 @@ OAuth access tokens are refreshed via official endpoints when expired; rotated t
 ## License
 
 MIT
+
+---
+
+## Config (optional)
+
+`~/.config/llm-usage/config.json`:
+
+```json
+{
+  "openai": {
+    "resetCreditsDisplay": "all"
+  }
+}
+```
+
+| Value | Meaning |
+|-------|---------|
+| `"all"` (default) | List every rate-limit reset credit expiry |
+| `"summary"` | Compact: `4 available · next exp 7/18` |
