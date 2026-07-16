@@ -15,6 +15,7 @@ import {
   isoFromEpochSec,
   secondsUntil,
 } from "../util.ts";
+import { loadConfig, type OpenAiResetCreditsDisplay } from "../config.ts";
 
 interface WhamWindow {
   used_percent?: number;
@@ -111,10 +112,16 @@ async function fetchResetCredits(
   }
 }
 
+function formatUtcMd(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
 function mapResetCredits(
   wham: WhamResponse,
   detail: ResetCreditsResponse | null,
-): UsageWindow | null {
+  display: OpenAiResetCreditsDisplay,
+): UsageWindow[] {
   const count =
     detail?.available_count ??
     wham.rate_limit_reset_credits?.available_count ??
@@ -128,28 +135,43 @@ function mapResetCredits(
   );
   const soonest = available[0]?.expires_at;
 
-  if (count <= 0 && !soonest) {
-    return {
+  if (count <= 0 && available.length === 0) {
+    return [{ id: "rate-resets", label: "Resets", note: "0 available" }];
+  }
+
+  if (display === "summary") {
+    const parts: string[] = [`${count} available`];
+    if (soonest) parts.push(`next exp ${formatUtcMd(soonest)}`);
+    return [
+      {
+        id: "rate-resets",
+        label: "Resets",
+        note: parts.join(" · "),
+        resetsAt: soonest,
+        resetAfterSeconds: secondsUntil(soonest),
+      },
+    ];
+  }
+
+  // default "all": list every available reset expiry
+  const out: UsageWindow[] = [
+    {
       id: "rate-resets",
       label: "Resets",
-      note: "0 available",
-    };
-  }
-
-  const parts: string[] = [`${count} available`];
-  if (soonest) {
-    const d = new Date(soonest);
-    const md = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
-    parts.push(`next exp ${md}`);
-  }
-
-  return {
-    id: "rate-resets",
-    label: "Resets",
-    note: parts.join(" · "),
-    resetsAt: soonest,
-    resetAfterSeconds: secondsUntil(soonest),
-  };
+      note: `${count} available`,
+    },
+  ];
+  available.forEach((c, i) => {
+    const exp = c.expires_at!;
+    out.push({
+      id: `rate-reset-${i}`,
+      label: `  #${i + 1}`,
+      note: `exp ${formatUtcMd(exp)}`,
+      resetsAt: exp,
+      resetAfterSeconds: secondsUntil(exp),
+    });
+  });
+  return out;
 }
 
 export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
@@ -235,8 +257,10 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
       });
     }
 
-    const resetWin = mapResetCredits(body, resets);
-    if (resetWin) windows.push(resetWin);
+    const cfg = loadConfig();
+    windows.push(
+      ...mapResetCredits(body, resets, cfg.openai.resetCreditsDisplay),
+    );
 
     return finalizeProvider({
       id: "openai",
