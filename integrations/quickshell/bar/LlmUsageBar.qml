@@ -79,6 +79,7 @@ MouseArea {
         if (id === "openai") return "OpenAI"
         if (id === "zai") return "GLM"
         if (id === "xai") return "Grok"
+        if (id === "anthropic") return "Claude"
         return id || "?"
     }
 
@@ -201,7 +202,7 @@ MouseArea {
 
         Row {
             anchors.centerIn: parent
-            spacing: 24
+            spacing: 18
 
             Repeater {
                 model: root.providers
@@ -211,11 +212,13 @@ MouseArea {
                     required property var modelData
                     spacing: 8
                     // Wide enough for "Session 5h: 12% · 4h 30m · 0/4000 calls"
-                    width: 240
+                    width: 200
 
                     StyledPopupHeaderRow {
                         icon: col.modelData.id === "openai" ? "smart_toy"
-                            : col.modelData.id === "zai" ? "token" : "bolt"
+                            : col.modelData.id === "zai" ? "token"
+                            : col.modelData.id === "anthropic" ? "psychology"
+                            : "bolt"
                         label: {
                             const name = root.shortId(col.modelData.id)
                             return col.modelData.plan ? (name + " · " + col.modelData.plan) : name

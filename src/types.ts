@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "zai" | "xai";
+export type ProviderId = "openai" | "zai" | "xai" | "anthropic";
 
 export type Severity = "ok" | "warn" | "crit" | "error" | "unknown";
 

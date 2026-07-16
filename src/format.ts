@@ -83,6 +83,8 @@ function shortName(p: ProviderStatus): string {
       return "GLM";
     case "xai":
       return "GRK";
+    case "anthropic":
+      return "CLD";
     default:
       return p.id;
   }
