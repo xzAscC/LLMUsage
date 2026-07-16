@@ -8,14 +8,6 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function mockJson(body: unknown, status = 200) {
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    })) as typeof fetch;
-}
-
 describe("fetchOpenAI", () => {
   test("missing oauth", async () => {
     const r = await fetchOpenAI({});
@@ -23,20 +15,46 @@ describe("fetchOpenAI", () => {
     expect(r.error).toMatch(/No OpenAI OAuth/i);
   });
 
-  test("maps wham windows and credits", async () => {
-    mockJson({
-      plan_type: "plus",
-      rate_limit: {
-        primary_window: {
-          used_percent: 15,
-          limit_window_seconds: 604800,
-          reset_after_seconds: 1000,
-          reset_at: 1700000000,
-        },
-        secondary_window: null,
-      },
-      credits: { has_credits: true, balance: "12.5" },
-    });
+  test("maps wham windows, credits, and rate resets", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("rate-limit-reset-credits")) {
+        return new Response(
+          JSON.stringify({
+            available_count: 4,
+            credits: [
+              {
+                status: "available",
+                expires_at: "2026-07-18T00:13:27.502577Z",
+              },
+              {
+                status: "available",
+                expires_at: "2026-08-12T17:31:01.503674Z",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          plan_type: "plus",
+          rate_limit: {
+            primary_window: {
+              used_percent: 15,
+              limit_window_seconds: 604800,
+              reset_after_seconds: 1000,
+              reset_at: 1700000000,
+            },
+            secondary_window: null,
+          },
+          credits: { has_credits: true, balance: "12.5" },
+          rate_limit_reset_credits: { available_count: 4 },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
     const auth: AuthFile = {
       openai: { type: "oauth", access: "SECRET_TOKEN", accountId: "acc" },
     };
@@ -46,6 +64,10 @@ describe("fetchOpenAI", () => {
     expect(r.usedPercent).toBe(15);
     expect(r.windows.some((w) => w.label === "Weekly")).toBe(true);
     expect(r.windows.some((w) => w.note?.includes("12.5"))).toBe(true);
+    const resets = r.windows.find((w) => w.id === "rate-resets");
+    expect(resets?.label).toBe("Resets");
+    expect(resets?.note).toContain("4 available");
+    expect(resets?.note).toContain("next exp");
     expect(JSON.stringify(r)).not.toMatch(/SECRET_TOKEN/);
   });
 });
