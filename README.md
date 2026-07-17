@@ -1,15 +1,27 @@
-# llm-usage
+# LLMUsage
 
-**Track ChatGPT / GLM / Grok subscription usage from your Hyprland bar.**
+**Track ChatGPT / GLM / Grok / Claude subscription usage from your Hyprland bar.**
 
-A small, local-first toolkit for people who use [OpenCode](https://opencode.ai) with **monthly coding subscriptions** (not pay-as-you-go Zen). It reads the same credentials OpenCode already stores, refreshes OAuth when needed, and shows remaining quotas where you actually look — the status bar.
+<p align="center">
+  <img src="docs/popup.png" alt="LLMUsage Quickshell popup — OpenAI, GLM, Grok, and Claude usage at a glance" width="720" />
+</p>
+
+## Motivation
+
+There are plenty of LLM usage monitors — web dashboards, browser extensions, Electron widgets, vendor-specific pages. Most of them fall short if you actually live on a tiling compositor:
+
+- They assume macOS / Windows / a browser tab, not a **Hyprland** status bar
+- They're heavy (Electron) or remote (someone else's cloud account)
+- They don't reuse the OAuth / API keys you already have in [OpenCode](https://opencode.ai)
+
+**LLMUsage** is built for that gap: a small, local-first toolkit that reads the credentials OpenCode (and Claude Code) already store, refreshes OAuth when needed, and surfaces remaining quotas **where you look** — the bar — with a plain CLI for everything else.
+
+No Electron. No cloud account. No global npm install. Just Bun + your existing logins.
 
 | Surface | What you get |
 |---------|----------------|
 | **CLI** | Human table, JSON, Waybar module, desktop notify |
-| **Quickshell bar** | Compact ring + click popup for OpenAI · GLM · Grok |
-
-No Electron, no cloud account, no global npm install. Just Bun + your existing OpenCode logins.
+| **Quickshell bar** | Compact ring + click popup for OpenAI · GLM · Grok · Claude |
 
 ---
 
@@ -44,8 +56,8 @@ No Electron, no cloud account, no global npm install. Just Bun + your existing O
 ## Quick start (CLI)
 
 ```bash
-git clone https://github.com/xzAscC/llm-usage.git
-cd llm-usage
+git clone https://github.com/xzAscC/LLMUsage.git
+cd LLMUsage
 
 ./bin/llm-usage status      # table in the terminal
 ./bin/llm-usage json        # structured snapshot
@@ -78,7 +90,7 @@ Loader {
     Layout.preferredWidth: item ? item.implicitWidth : 0
     Layout.preferredHeight: item ? item.implicitHeight : 0
     // set to YOUR clone path
-    source: "file:///home/YOU/path/to/llm-usage/integrations/quickshell/bar/LlmUsageBar.qml"
+    source: "file:///home/YOU/path/to/LLMUsage/integrations/quickshell/bar/LlmUsageBar.qml"
 }
 ```
 
@@ -86,7 +98,7 @@ Also set `projectRoot` (and `bunPath` if needed) near the top of `LlmUsageBar.qm
 
 | Input | Action |
 |-------|--------|
-| Left click | Open 3-column details (closes when pointer leaves) |
+| Left click | Open multi-column details (closes when pointer leaves) |
 | Right click | Force refresh |
 
 Reload the shell, e.g. `killall qs; qs -c ii &`.
@@ -96,14 +108,14 @@ Reload the shell, e.g. `killall qs; qs -c ii &`.
 ## How it works
 
 ```
-OpenCode auth.json  ──►  providers (OpenAI / Z.AI / xAI APIs)
-                              │
-                              ▼
-                     ~/.cache/llm-usage/snapshot.json
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-           CLI status     Waybar JSON    Quickshell bar
+OpenCode auth.json  ──►  providers (OpenAI / Z.AI / xAI / Claude APIs)
+                               │
+                               ▼
+                      ~/.cache/llm-usage/snapshot.json
+                               │
+               ┌───────────────┼───────────────┐
+               ▼               ▼               ▼
+            CLI status     Waybar JSON    Quickshell bar
 ```
 
 OpenAI and Claude Code access tokens are refreshed through their official endpoints when expired. For xAI, OpenCode remains the sole refresh owner; this tool reloads the rotated access token from OpenCode's auth file instead of consuming the shared refresh token.
