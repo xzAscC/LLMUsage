@@ -15,7 +15,7 @@ import {
   isoFromEpochSec,
   secondsUntil,
 } from "../util.ts";
-import { loadConfig, type OpenAiResetCreditsDisplay } from "../config.ts";
+import { loadConfig, type ResetCreditsDisplay } from "../config.ts";
 
 interface WhamWindow {
   used_percent?: number;
@@ -120,7 +120,7 @@ function formatUtcMd(iso: string): string {
 function mapResetCredits(
   wham: WhamResponse,
   detail: ResetCreditsResponse | null,
-  display: OpenAiResetCreditsDisplay,
+  display: ResetCreditsDisplay,
 ): UsageWindow[] {
   const count =
     detail?.available_count ??
