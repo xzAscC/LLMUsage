@@ -32,7 +32,7 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 - **GLM / Z.AI Coding Plan**  
   Session (5h) + weekly **token** quotas (tool/search usage ignored)
 - **Grok / xAI**  
-  **Weekly SuperGrok** pool (same meter as the grok.com usage UI)
+  **Weekly SuperGrok** pool (same meter as the grok.com usage UI) + **usage-limit resets** (count + expiry, via `grok.com GetRemainingResets`; hidden when the RPC is unavailable)
 - **Claude Code**  
   Session 5h + weekly windows from `api/oauth/usage` (reads `~/.claude/.credentials.json`)
 - **Auto OAuth refresh** for OpenAI and Claude Code; xAI refresh stays owned by OpenCode to avoid rotating-token races
@@ -144,14 +144,19 @@ MIT
 {
   "openai": {
     "resetCreditsDisplay": "all"
+  },
+  "xai": {
+    "resetCreditsDisplay": "all"
   }
 }
 ```
 
 | Value | Meaning |
 |-------|---------|
-| `"all"` (default) | List every rate-limit reset credit expiry |
+| `"all"` (default) | List every reset credit / reset expiry |
 | `"summary"` | Compact: `4 available · next exp 7/18` |
+
+`openai.resetCreditsDisplay` controls ChatGPT rate-limit reset credits; `xai.resetCreditsDisplay` controls Grok usage-limit resets.
 
 ## TODO
 - [ ] Persist Grok usage data
