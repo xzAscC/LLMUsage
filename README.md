@@ -2,9 +2,6 @@
 
 **Track Claude / ChatGPT / GLM / Grok / Kimi / MiniMax subscription usage from your Hyprland bar.**
 
-<p align="center">
-  <img src="docs/popup.png" alt="LLMUsage Quickshell popup — OpenAI, GLM, Grok, and Claude usage at a glance" widt## Motivation
-
 There are plenty of LLM usage monitors — web dashboards, browser extensions, Electron widgets, macOS menu-bar apps like [Headroom](https://github.com/BioInfo/headroom). Most of them fall short if you actually live on a tiling compositor:
 
 - They assume macOS / Windows / a browser tab, not a **Hyprland** status bar
