@@ -1,0 +1,103 @@
+README.md
+  s_0959f2a460f5d3::t_290780bf710250 3,6,8,12,14,20-22,28-54,61,63,73-79,83-88,95-99,126,129-134,142-143,145,147-154,162,175,179-185,189-199
+bunfig.toml
+  s_0959f2a460f5d3::t_b833a979ceb726 1-2
+install.sh
+  s_0959f2a460f5d3::t_824427a0182af7 3-4,12,30-42
+integrations/quickshell/bar/LlmUsageBar.qml
+  s_0959f2a460f5d3::t_85cdd1265ed4eb 11-12,21-22,30-32,39-45,57,68-72,75,80-85,88-116,121,124,127-139,141,146,148,150-153,158,160-161,163,174,181,204-229,244,247-358,362-376,378,380-417,419-420,422-425,430-436,439-476
+integrations/quickshell/bar/LuCard.qml
+  s_0959f2a460f5d3::t_8b041535dd0b33 1-242
+integrations/quickshell/bar/LuChefHat.qml
+  s_0959f2a460f5d3::t_86d555a3508a55 1-72
+integrations/quickshell/bar/LuGauge.qml
+  s_0959f2a460f5d3::t_0940254ad19a45 1-43
+integrations/quickshell/bar/LuHistory.qml
+  s_0959f2a460f5d3::t_5cd2a8603c99b5 1-270
+integrations/quickshell/bar/LuMeter.qml
+  s_0959f2a460f5d3::t_1122ba89be597d 1-110
+integrations/quickshell/bar/LuSkin.qml
+  s_0959f2a460f5d3::t_9b27ffc91f8575 1-96
+integrations/systemd/llm-usage.service
+  s_0959f2a460f5d3::t_0e5f94f29a0601 1-8
+integrations/systemd/llm-usage.timer
+  s_0959f2a460f5d3::t_ec98bc10547067 1-11
+package.json
+  s_0959f2a460f5d3::t_611db145add786 3,13-15
+src/alerts.test.ts
+  s_0959f2a460f5d3::t_61c558a9c111e1 1-51
+src/alerts.ts
+  s_0959f2a460f5d3::t_9edcc057b58985 1-123
+src/auth.ts
+  s_0959f2a460f5d3::t_254fe12408f683 13-14,47-52,85-99
+src/collect.test.ts
+  s_0959f2a460f5d3::t_233fbd036c0a97 1-57
+src/collect.ts
+  s_0959f2a460f5d3::t_c36535b39b5360 1-9,14-18,20-39,41,45-77,80-82
+src/config.ts
+  s_0959f2a460f5d3::t_d59946e1f82b5a 3,7-17,27-35,39-45,53-60,64-68,70-75,77-82,84
+src/credentials.test.ts
+  s_0959f2a460f5d3::t_0d2511518c58ad 1-125
+src/credentials.ts
+  s_0959f2a460f5d3::t_f04a9ac5b87392 1-448
+src/doctor.ts
+  s_0959f2a460f5d3::t_546089dd24d181 1-98
+src/format.ts
+  s_0959f2a460f5d3::t_3bfd4442197a64 2,5-13,30-34,39,41,69,79-80,101-104
+src/history.ts
+  s_0959f2a460f5d3::t_6cb10bb09a166e 1-146
+src/index.ts
+  s_0959f2a460f5d3::t_81c197ebfa57a9 2,4-5,7-8,14-21,24,27-33,36-38,44-59,71-72,74-75,77-88,91-96,98-99,102-104
+src/oauth-refresh.ts
+  s_0959f2a460f5d3::t_5b8200baf04a21 9,22-25,95-102,169-171,192,205-210,215,221-237,239-240,242,250-251,255,259-283
+src/pace.test.ts
+  s_0959f2a460f5d3::t_1b7aa6e330b7c1 1-31
+src/pace.ts
+  s_0959f2a460f5d3::t_b93a28e81b9787 1-60
+src/paths.ts
+  s_0959f2a460f5d3::t_80d8a7468f4a6d 23-69,78-81,83
+src/procs.ts
+  s_0959f2a460f5d3::t_0b1cc26312c1ce 1-46
+src/providers/anthropic.ts
+  s_0959f2a460f5d3::t_2a212af3e318b6 1,3-8,17-18,46,49,70,94,105,116,120,124,129,141,153-156,194-197,207-210,212,214-218,222-223,230-232,238
+src/providers/kimi.ts
+  s_0959f2a460f5d3::t_9b8cd14ae48a1e 1-120
+src/providers/minimax.ts
+  s_0959f2a460f5d3::t_b34ef00b2f43f9 1-97
+src/providers/openai.test.ts
+  s_0959f2a460f5d3::t_a8d3b7662c12bc 70
+src/providers/openai.ts
+  s_0959f2a460f5d3::t_070ecd8d8e8d26 6,8-13,84,182-185,187,190-197,230,232,239,241-244
+src/providers/optional.test.ts
+  s_0959f2a460f5d3::t_23310ff9493246 1-45
+src/providers/xai.test.ts
+  s_0959f2a460f5d3::t_575a856fe19fca 13,20,49-50,53,89,100,107,111,115-145,165
+src/providers/xai.ts
+  s_0959f2a460f5d3::t_d051fa1954eaec 1,3-11,54-55,80-83,94-104,114,116-117,120,125,479-480,483-505,508-512,517,525,530,532,538
+src/providers/zai.ts
+  s_0959f2a460f5d3::t_adced9a72985ab 1-2,26,55-68,91,95,97,102-119,121-127,129,131,135-172
+src/severity.ts
+  s_0959f2a460f5d3::t_4581706110c0d7 8,47-50,53,62,69-72,85
+src/test-setup.ts
+  s_0959f2a460f5d3::t_9a5129945bafd3 1-25
+src/tokens.ts
+  s_0959f2a460f5d3::t_f3a592c2160da0 1-181
+src/types.ts
+  s_0959f2a460f5d3::t_f6053360539a0f 1-7,27-30,35-47,54-58,71-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbdab327d50fe79faab6b5f920a9194bab78a5d6",
+  "prompts": {},
+  "sessions": {
+    "s_0959f2a460f5d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b6f6ead-a778-4a4e-a34b-47ef7e1e7ba0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
