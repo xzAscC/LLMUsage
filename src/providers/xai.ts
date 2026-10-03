@@ -1,11 +1,14 @@
-import {
-  type AuthFile,
-  type OAuthCredential,
-  getOAuth,
-  loadAuth,
-} from "../auth.ts";
+import type { AuthFile, OAuthCredential } from "../auth.ts";
 import { loadConfig, type ResetCreditsDisplay } from "../config.ts";
-import { opencodeAuthPath } from "../paths.ts";
+import {
+  authFileSource,
+  callWithOAuth,
+  CredentialError,
+  loadStores,
+  xaiSources,
+  type OAuthSource,
+} from "../credentials.ts";
+import { xaiRefresher } from "../oauth-refresh.ts";
 import { finalizeProvider } from "../severity.ts";
 import type { ProviderStatus, UsageWindow } from "../types.ts";
 import {
@@ -48,7 +51,8 @@ interface GrokSettingsResponse {
   subscription_tier_display?: string;
 }
 
-const GROK_CLI_VERSION = "0.2.93";
+// keep ≥ settings.min_client_version or the proxy may start refusing us
+const GROK_CLI_VERSION = "1.0.13";
 
 function periodLabel(type?: string): string {
   if (!type) return "Weekly";
@@ -73,8 +77,10 @@ function grokHeaders(oauth: OAuthCredential): Record<string, string> {
 
 function shortError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes("401") || msg.includes("token_expired")) {
-    return "xAI token expired — refresh failed. Run: opencode auth login";
+  if (err instanceof CredentialError) {
+    return msg === "no credentials"
+      ? "No xAI OAuth — log in with the grok CLI (or pi / OpenCode)"
+      : msg;
   }
   const m = msg.match(/HTTP\s+(\d+)/);
   if (m) return `HTTP ${m[1]} from Grok billing`;
@@ -85,6 +91,17 @@ function windowsFromBilling(weekly: GrokBillingConfig): UsageWindow[] {
   const windows: UsageWindow[] = [];
 
   const weeklyEnd = weekly.currentPeriod?.end || weekly.billingPeriodEnd;
+  const weeklyStart = weekly.currentPeriod?.start || weekly.billingPeriodStart;
+  const span =
+    weeklyStart && weeklyEnd
+      ? (Date.parse(weeklyEnd) - Date.parse(weeklyStart)) / 1000
+      : NaN;
+  const windowSeconds =
+    Number.isFinite(span) && span > 0
+      ? span
+      : weekly.currentPeriod?.type?.includes("WEEKLY")
+        ? 7 * 86400
+        : undefined;
   if (weekly.creditUsagePercent != null) {
     const usedPercent = clampPercent(weekly.creditUsagePercent);
     windows.push({
@@ -94,16 +111,18 @@ function windowsFromBilling(weekly: GrokBillingConfig): UsageWindow[] {
       remainingPercent: clampPercent(100 - usedPercent),
       resetsAt: weeklyEnd,
       resetAfterSeconds: secondsUntil(weeklyEnd),
+      windowSeconds,
     });
-  } else if (weekly.currentPeriod?.type?.includes("WEEKLY") && weeklyEnd) {
+  } else if (weekly.currentPeriod?.type && weeklyEnd) {
+    // proto3 JSON omits zero values: a period with no percent means 0% used
     windows.push({
       id: "weekly",
-      label: "Weekly",
+      label: periodLabel(weekly.currentPeriod.type),
       usedPercent: 0,
       remainingPercent: 100,
       resetsAt: weeklyEnd,
       resetAfterSeconds: secondsUntil(weeklyEnd),
-      note: "no % from API",
+      windowSeconds,
     });
   }
 
@@ -457,89 +476,69 @@ function grokResetsToWindows(
 }
 
 export async function fetchXai(
-  auth: AuthFile,
-  authPath = opencodeAuthPath(),
+  auth?: AuthFile,
+  sourcesOrPath?: OAuthSource[] | string,
 ): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  let oauth = getOAuth(auth, ["xai", "grok"]);
+  const base = { id: "xai" as const, name: "Grok / xAI", fetchedAt: now };
+  const sources = Array.isArray(sourcesOrPath)
+    ? sourcesOrPath
+    : typeof sourcesOrPath === "string" && auth
+      ? [authFileSource("opencode", sourcesOrPath, auth, ["xai", "grok"])].filter(
+          (s): s is OAuthSource => s != null,
+        )
+      : xaiSources(loadStores(auth));
 
-  if (!oauth) {
-    return finalizeProvider({
-      id: "xai",
-      name: "Grok / xAI",
-      ok: false,
-      error: "No xAI OAuth in OpenCode auth.json (opencode /connect xai)",
-      windows: [],
-      fetchedAt: now,
-    });
-  }
+  const fetchAll = async (token: OAuthCredential) => {
+    const headers = grokHeaders(token);
+    const [weekly, settings] = await Promise.all([
+      fetchJson<GrokBillingResponse>(
+        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+        { headers },
+      ),
+      fetchJson<GrokSettingsResponse>(
+        "https://cli-chat-proxy.grok.com/v1/settings",
+        { headers },
+      ).catch(() => null),
+    ]);
+    return { weekly, settings };
+  };
 
   try {
-    const fetchAll = async (token: OAuthCredential) => {
-      const headers = grokHeaders(token);
-      const [weekly, settings] = await Promise.all([
-        fetchJson<GrokBillingResponse>(
-          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-          { headers },
-        ),
-        fetchJson<GrokSettingsResponse>(
-          "https://cli-chat-proxy.grok.com/v1/settings",
-          { headers },
-        ).catch(() => null),
-      ]);
-      return { weekly, settings };
-    };
-
-    let pack: Awaited<ReturnType<typeof fetchAll>>;
-    try {
-      pack = await fetchAll(oauth);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("401") && !msg.includes("token_expired")) throw err;
-      const latest = getOAuth(loadAuth(authPath), ["xai", "grok"]);
-      if (!latest || latest.access === oauth.access) {
-        throw new Error(
-          "xAI access token expired — use xAI in OpenCode to refresh it, or run: opencode auth login",
-        );
-      }
-      oauth = latest;
-      pack = await fetchAll(oauth);
-    }
-
+    const { result: pack, source, cred } = await callWithOAuth(
+      sources,
+      (s) => xaiRefresher(s.clientId),
+      fetchAll,
+    );
     const windows = windowsFromBilling(pack.weekly.config || {});
 
     if (windows.length === 0) {
       return finalizeProvider({
-        id: "xai",
-        name: "Grok / xAI",
+        ...base,
         plan: pack.settings?.subscription_tier_display,
         ok: false,
         error: "No Grok weekly SuperGrok usage data",
         windows: [],
-        fetchedAt: now,
       });
     }
 
-    const resets = await fetchGrokResets(oauth);
+    const resets = await fetchGrokResets(cred);
     const cfg = loadConfig();
     windows.push(...grokResetsToWindows(resets, cfg.xai.resetCreditsDisplay));
 
     return finalizeProvider({
-      id: "xai",
-      name: "Grok / xAI",
+      ...base,
       plan: pack.settings?.subscription_tier_display,
+      source: source.label,
       ok: true,
       windows,
-      fetchedAt: now,
     });
   } catch (err) {
     return finalizeProvider({
-      id: "xai",
-      name: "Grok / xAI",
+      ...base,
       ok: false,
       error: shortError(err),
       windows: [],
-      fetchedAt: now,
     });
   }
 }

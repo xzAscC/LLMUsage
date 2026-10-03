@@ -1,0 +1,8 @@
+[Unit]
+Description=LLM usage refresh, history and threshold alerts
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@BUN@ @ROOT@/src/index.ts notify
+Nice=10

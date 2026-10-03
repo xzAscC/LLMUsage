@@ -1,15 +1,11 @@
-import { existsSync, readFileSync, writeFileSync, renameSync } from "fs";
-import { join, dirname } from "path";
-import { homedir } from "os";
+import type { AuthFile, OAuthCredential } from "../auth.ts";
 import {
-  type AuthFile,
-  type OAuthCredential,
-  getOAuth,
-} from "../auth.ts";
-import {
-  ensureFreshOAuth,
-  isOAuthExpired,
-} from "../oauth-refresh.ts";
+  anthropicSources,
+  callWithOAuth,
+  CredentialError,
+  loadStores,
+  type OAuthSource,
+} from "../credentials.ts";
 import { finalizeProvider } from "../severity.ts";
 import type { ProviderStatus, UsageWindow } from "../types.ts";
 import { clampPercent, fetchJson, secondsUntil } from "../util.ts";
@@ -18,19 +14,8 @@ const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const BETA = "oauth-2025-04-20";
-
-interface ClaudeCodeOAuth {
-  accessToken?: string;
-  refreshToken?: string;
-  expiresAt?: number;
-  subscriptionType?: string;
-  rateLimitTier?: string;
-  scopes?: string[];
-}
-
-interface ClaudeCredentialsFile {
-  claudeAiOauth?: ClaudeCodeOAuth;
-}
+const SESSION_SECONDS = 5 * 3600;
+const WEEK_SECONDS = 7 * 86400;
 
 interface LegacyBucket {
   utilization?: number;
@@ -58,42 +43,10 @@ interface UsageResponse {
   };
 }
 
-function claudeCredentialsPath(): string {
-  return (
-    process.env.CLAUDE_CREDENTIALS_PATH ||
-    join(homedir(), ".claude", ".credentials.json")
-  );
-}
-
-function readClaudeCodeOAuth(): ClaudeCodeOAuth | null {
-  const path = claudeCredentialsPath();
-  if (!existsSync(path)) return null;
-  try {
-    const data = JSON.parse(readFileSync(path, "utf8")) as ClaudeCredentialsFile;
-    return data.claudeAiOauth || null;
-  } catch {
-    return null;
-  }
-}
-
-function toOAuth(cc: ClaudeCodeOAuth): OAuthCredential | null {
-  if (!cc.accessToken) return null;
-  return {
-    type: "oauth",
-    access: cc.accessToken,
-    refresh: cc.refreshToken || undefined,
-    expires: cc.expiresAt,
-  };
-}
-
-async function refreshClaudeCodeToken(
+export async function refreshClaudeToken(
   oauth: OAuthCredential,
 ): Promise<OAuthCredential> {
-  if (!oauth.refresh) {
-    throw new Error(
-      "Claude Code access expired and no refresh token — run: claude auth login",
-    );
-  }
+  if (!oauth.refresh) throw new Error("Claude OAuth missing refresh token");
   const resp = await fetchJson<{
     access_token?: string;
     refresh_token?: string;
@@ -114,68 +67,12 @@ async function refreshClaudeCodeToken(
   if (!resp.access_token) {
     throw new Error("Claude OAuth refresh returned no access_token");
   }
-  const next: OAuthCredential = {
+  return {
     type: "oauth",
     access: resp.access_token,
     refresh: resp.refresh_token || oauth.refresh,
     expires: Date.now() + (resp.expires_in ?? 28800) * 1000,
   };
-  persistClaudeCodeOAuth(next);
-  return next;
-}
-
-function persistClaudeCodeOAuth(oauth: OAuthCredential): void {
-  const path = claudeCredentialsPath();
-  if (!existsSync(path)) return;
-  const data = JSON.parse(readFileSync(path, "utf8")) as ClaudeCredentialsFile;
-  const prev = data.claudeAiOauth || {};
-  data.claudeAiOauth = {
-    ...prev,
-    accessToken: oauth.access,
-    refreshToken: oauth.refresh || prev.refreshToken || "",
-    expiresAt: oauth.expires,
-  };
-  const tmp = join(dirname(path), `.credentials.json.${Date.now()}.tmp`);
-  writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-  renameSync(tmp, path);
-}
-
-async function resolveToken(auth: AuthFile): Promise<{
-  oauth: OAuthCredential;
-  plan?: string;
-  source: "claude-code" | "opencode";
-}> {
-  const cc = readClaudeCodeOAuth();
-  if (cc?.accessToken) {
-    let oauth = toOAuth(cc)!;
-    if (isOAuthExpired(oauth) && oauth.refresh) {
-      oauth = await refreshClaudeCodeToken(oauth);
-    } else if (isOAuthExpired(oauth) && !oauth.refresh) {
-      // setup tokens (sk-ant-oat01) may still work past local expiresAt
-      // try usage anyway; 401 will surface re-login
-    }
-    return {
-      oauth,
-      plan: cc.subscriptionType,
-      source: "claude-code",
-    };
-  }
-
-  const op = await ensureFreshOAuth(
-    auth,
-    ["anthropic", "claude"],
-    async (o) => {
-      // OpenCode anthropic uses same refresh endpoint/client as Claude Code
-      return refreshClaudeCodeToken(o);
-    },
-    "anthropic",
-  );
-  if (!op) {
-    throw new Error(
-      "No Claude credentials — run: claude auth login (or opencode auth login)",
-    );
-  }
-  return { oauth: op, source: "opencode" };
 }
 
 async function fetchUsage(access: string): Promise<UsageResponse> {
@@ -194,6 +91,7 @@ function legacyWindow(
   id: string,
   label: string,
   bucket: LegacyBucket | null | undefined,
+  windowSeconds?: number,
 ): UsageWindow | null {
   if (!bucket || typeof bucket.utilization !== "number") return null;
   const usedPercent = clampPercent(bucket.utilization);
@@ -204,6 +102,7 @@ function legacyWindow(
     remainingPercent: clampPercent(100 - usedPercent),
     resetsAt: bucket.resets_at,
     resetAfterSeconds: secondsUntil(bucket.resets_at),
+    windowSeconds,
   };
 }
 
@@ -214,16 +113,20 @@ function mapLimits(limits: LimitEntry[]): UsageWindow[] {
     const usedPercent = clampPercent(lim.percent);
     let id = "limit";
     let label = "Limit";
+    let windowSeconds: number | undefined;
     if (lim.kind === "session") {
       id = "session-5h";
       label = "Session 5h";
+      windowSeconds = SESSION_SECONDS;
     } else if (lim.kind === "weekly_all") {
       id = "weekly";
       label = "Weekly";
+      windowSeconds = WEEK_SECONDS;
     } else if (lim.kind === "weekly_scoped") {
       const name = lim.scope?.model?.display_name || "Scoped";
       id = `weekly-${name.toLowerCase().replace(/\s+/g, "-")}`;
       label = name;
+      windowSeconds = WEEK_SECONDS;
     } else if (lim.kind) {
       id = lim.kind;
       label = lim.kind;
@@ -235,6 +138,7 @@ function mapLimits(limits: LimitEntry[]): UsageWindow[] {
       remainingPercent: clampPercent(100 - usedPercent),
       resetsAt: lim.resets_at,
       resetAfterSeconds: secondsUntil(lim.resets_at),
+      windowSeconds,
     });
   }
   return out;
@@ -246,10 +150,10 @@ function mapUsage(body: UsageResponse): UsageWindow[] {
     if (fromLimits.length) return fromLimits;
   }
   const windows: UsageWindow[] = [];
-  const five = legacyWindow("session-5h", "Session 5h", body.five_hour);
-  const week = legacyWindow("weekly", "Weekly", body.seven_day);
-  const sonnet = legacyWindow("weekly-sonnet", "Sonnet", body.seven_day_sonnet);
-  const opus = legacyWindow("weekly-opus", "Opus", body.seven_day_opus);
+  const five = legacyWindow("session-5h", "Session 5h", body.five_hour, SESSION_SECONDS);
+  const week = legacyWindow("weekly", "Weekly", body.seven_day, WEEK_SECONDS);
+  const sonnet = legacyWindow("weekly-sonnet", "Sonnet", body.seven_day_sonnet, WEEK_SECONDS);
+  const opus = legacyWindow("weekly-opus", "Opus", body.seven_day_opus, WEEK_SECONDS);
   for (const w of [five, week, sonnet, opus]) {
     if (w) windows.push(w);
   }
@@ -287,8 +191,10 @@ function mapUsage(body: UsageResponse): UsageWindow[] {
 
 function shortError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes("401") || msg.includes("authentication_error")) {
-    return "Claude auth invalid — run: claude auth login";
+  if (err instanceof CredentialError) {
+    return msg === "no credentials"
+      ? "No Claude credentials — run: claude auth login"
+      : msg;
   }
   if (msg.includes("429") || msg.includes("rate_limit")) {
     return "Claude usage API rate-limited — try later";
@@ -298,80 +204,41 @@ function shortError(err: unknown): string {
   return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
 }
 
-export async function fetchAnthropic(auth: AuthFile): Promise<ProviderStatus> {
+export async function fetchAnthropic(
+  auth?: AuthFile,
+  sources: OAuthSource[] = anthropicSources(loadStores(auth)),
+): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  let resolved: Awaited<ReturnType<typeof resolveToken>>;
+  const base = { id: "anthropic" as const, name: "Claude", fetchedAt: now };
   try {
-    resolved = await resolveToken(auth);
-  } catch (err) {
-    return finalizeProvider({
-      id: "anthropic",
-      name: "Claude",
-      ok: false,
-      error: shortError(err),
-      windows: [],
-      fetchedAt: now,
-    });
-  }
-
-  try {
-    let body: UsageResponse;
-    try {
-      body = await fetchUsage(resolved.oauth.access);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (
-        (msg.includes("401") || msg.includes("authentication")) &&
-        resolved.oauth.refresh
-      ) {
-        const next =
-          resolved.source === "claude-code"
-            ? await refreshClaudeCodeToken(resolved.oauth)
-            : await ensureFreshOAuth(
-                auth,
-                ["anthropic", "claude"],
-                refreshClaudeCodeToken,
-                "anthropic",
-                true,
-              );
-        if (!next) throw err;
-        resolved.oauth = next;
-        body = await fetchUsage(next.access);
-      } else {
-        throw err;
-      }
-    }
-
+    const { result: body, source } = await callWithOAuth(
+      sources,
+      () => refreshClaudeToken,
+      (cred) => fetchUsage(cred.access),
+    );
     const windows = mapUsage(body);
     if (windows.length === 0) {
       return finalizeProvider({
-        id: "anthropic",
-        name: "Claude",
-        plan: resolved.plan,
+        ...base,
+        plan: source.plan,
         ok: false,
         error: "Claude usage API returned no windows",
         windows: [],
-        fetchedAt: now,
       });
     }
-
     return finalizeProvider({
-      id: "anthropic",
-      name: "Claude",
-      plan: resolved.plan,
+      ...base,
+      plan: source.plan,
+      source: source.label,
       ok: true,
       windows,
-      fetchedAt: now,
     });
   } catch (err) {
     return finalizeProvider({
-      id: "anthropic",
-      name: "Claude",
-      plan: resolved.plan,
+      ...base,
       ok: false,
       error: shortError(err),
       windows: [],
-      fetchedAt: now,
     });
   }
 }

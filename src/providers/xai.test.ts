@@ -10,12 +10,14 @@ import {
   resetsFromJson,
 } from "./xai.ts";
 import type { AuthFile } from "../auth.ts";
+import { setRunningProcesses } from "../procs.ts";
 
 const originalFetch = globalThis.fetch;
 const tempDirs: string[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  setRunningProcesses([]);
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -44,11 +46,11 @@ describe("fetchXai", () => {
       const url = String(input);
       if (url.includes("format=credits")) {
         const headers = new Headers(init?.headers);
-        expect(headers.get("x-grok-cli-version")).toBe("0.2.93");
-        expect(headers.get("x-grok-client-version")).toBe("0.2.93");
+        expect(headers.get("x-grok-cli-version")).toBe("1.0.13");
+        expect(headers.get("x-grok-client-version")).toBe("1.0.13");
         expect(headers.get("x-grok-client-surface")).toBe("grok-cli");
         expect(headers.get("x-xai-token-auth")).toBe("xai-grok-cli");
-        expect(headers.get("user-agent")).toBe("grok-cli/0.2.93");
+        expect(headers.get("user-agent")).toBe("grok-cli/1.0.13");
         return new Response(
           JSON.stringify({
             config: {
@@ -84,7 +86,7 @@ describe("fetchXai", () => {
     expect(JSON.stringify(r)).not.toMatch(/SECRET_XAI_TOKEN/);
   });
 
-  test("never consumes the refresh token shared with OpenCode", async () => {
+  test("leaves the refresh token alone while the owning agent runs", async () => {
     let tokenEndpointCalls = 0;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -95,24 +97,52 @@ describe("fetchXai", () => {
       if (url.includes("format=credits")) {
         return new Response("unauthorized", { status: 401 });
       }
-      if (url.includes("/v1/settings")) {
-        return new Response("{}", { status: 200 });
-      }
-      return new Response("{}", { status: 404 });
+      return new Response("{}", { status: 200 });
     }) as typeof fetch;
 
     const auth: AuthFile = {
       xai: {
         type: "oauth",
         access: "EXPIRED_XAI_TOKEN",
-        refresh: "REVOKED_REFRESH_TOKEN",
+        refresh: "SHARED_REFRESH_TOKEN",
         expires: Date.now() - 1_000,
       },
     };
+    setRunningProcesses(["opencode"]);
     const r = await fetchXai(auth, tempAuthFile(auth));
     expect(r.ok).toBe(false);
     expect(tokenEndpointCalls).toBe(0);
-    expect(r.error).toMatch(/expired.*OpenCode.*opencode auth login/i);
+    expect(r.error).toMatch(/OpenCode is running/);
+  });
+
+  test("refreshes and persists when the owning agent is idle", async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("auth.x.ai/oauth2/token")) {
+        expect(String(init?.body)).toContain("refresh_token=OLD_REFRESH");
+        return new Response(
+          JSON.stringify({ access_token: "NEW_ACCESS", refresh_token: "NEW_REFRESH", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("format=credits")) {
+        const ok = String((init?.headers as Record<string, string>).Authorization).includes("NEW_ACCESS");
+        return ok
+          ? new Response(JSON.stringify({ config: { creditUsagePercent: 5 } }), { status: 200 })
+          : new Response("unauthorized", { status: 401 });
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+
+    const auth: AuthFile = {
+      xai: { type: "oauth", access: "OLD", refresh: "OLD_REFRESH", expires: Date.now() - 1_000 },
+    };
+    const path = tempAuthFile(auth);
+    const r = await fetchXai(auth, path);
+    expect(r.ok).toBe(true);
+    const saved = JSON.parse(await Bun.file(path).text());
+    expect(saved.xai.access).toBe("NEW_ACCESS");
+    expect(saved.xai.refresh).toBe("NEW_REFRESH");
   });
 
   test("does not swallow billing authentication failures", async () => {
@@ -132,7 +162,7 @@ describe("fetchXai", () => {
     };
     const r = await fetchXai(auth);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/expired.*opencode auth login/i);
+    expect(r.error).toMatch(/token rejected/i);
     expect(r.error).not.toMatch(/No Grok weekly/i);
   });
 

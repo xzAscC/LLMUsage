@@ -10,7 +10,8 @@ export interface OAuthCredential {
 }
 
 export interface ApiCredential {
-  type: "api";
+  /** OpenCode writes "api", pi writes "api_key". */
+  type: "api" | "api_key";
   key: string;
 }
 
@@ -43,7 +44,12 @@ export function getOAuth(
 export function getApiKey(auth: AuthFile, keys: string[]): string | null {
   for (const key of keys) {
     const entry = auth[key];
-    if (entry && entry.type === "api" && "key" in entry && entry.key) {
+    if (
+      entry &&
+      (entry.type === "api" || entry.type === "api_key") &&
+      "key" in entry &&
+      entry.key
+    ) {
       return (entry as ApiCredential).key;
     }
   }
@@ -75,4 +81,19 @@ export function chatgptAccountId(oauth: OAuthCredential): string | undefined {
     if (typeof id === "string") return id;
   }
   return undefined;
+}
+
+/** Like loadAuth, but a missing or unreadable file is just an empty store. */
+export function loadAuthIfExists(path: string): AuthFile {
+  try {
+    return loadAuth(path);
+  } catch {
+    return {};
+  }
+}
+
+/** JWT `exp` claim in epoch ms, when present. */
+export function jwtExpiryMs(token: string): number | undefined {
+  const exp = decodeJwtPayload(token)?.exp;
+  return typeof exp === "number" ? exp * 1000 : undefined;
 }

@@ -6,7 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from "fs";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import {
   type AuthFile,
   type OAuthCredential,
@@ -18,6 +18,10 @@ import { fetchJson } from "./util.ts";
 
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+
+const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+/** OpenCode's xAI OAuth client; the Grok CLI stores its own id in ~/.grok/auth.json. */
+export const XAI_OPENCODE_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 
 const SKEW_MS = 120_000;
 const REFRESH_LOCK_POLL_MS = 25;
@@ -88,6 +92,14 @@ export async function refreshOpenAIOAuth(
   return applyTokenResponse(oauth, resp);
 }
 
+export function xaiRefresher(clientId = XAI_OPENCODE_CLIENT_ID) {
+  return async (oauth: OAuthCredential): Promise<OAuthCredential> => {
+    if (!oauth.refresh) throw new Error("xAI OAuth missing refresh token");
+    const resp = await postRefresh(XAI_TOKEN_URL, clientId, oauth.refresh);
+    return applyTokenResponse(oauth, resp);
+  };
+}
+
 export function persistOAuthProvider(
   providerKey: string,
   oauth: OAuthCredential,
@@ -154,15 +166,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withOAuthRefreshLock<T>(
-  authPath: string,
-  providerKey: string,
+export async function withFileLock<T>(
+  lockPath: string,
+  label: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  const lockPath = join(
-    dirname(authPath),
-    `.auth.json.${providerKey}.llm-usage.lock`,
-  );
   const deadline = Date.now() + REFRESH_LOCK_TIMEOUT_MS;
 
   while (true) {
@@ -181,7 +189,7 @@ async function withOAuthRefreshLock<T>(
         throw statError;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for ${providerKey} OAuth refresh lock`);
+        throw new Error(`Timed out waiting for ${label} OAuth refresh lock`);
       }
       await delay(REFRESH_LOCK_POLL_MS);
     }
@@ -194,17 +202,59 @@ async function withOAuthRefreshLock<T>(
   }
 }
 
-async function recoverRotatedCredential(
-  authPath: string,
-  providerKeys: string[],
+export function lockPathFor(credPath: string, key: string): string {
+  return join(dirname(credPath), `.${basename(credPath)}.${key}.llm-usage.lock`);
+}
+
+async function recoverRotated(
+  read: () => OAuthCredential | null,
   stale: OAuthCredential,
 ): Promise<OAuthCredential | null> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     await delay(100);
-    const current = getOAuth(loadAuth(authPath), providerKeys);
+    const current = read();
     if (current && credentialsChanged(stale, current)) return current;
   }
   return null;
+}
+
+/**
+ * Refresh a file-backed OAuth credential under a cross-process lock.
+ * Re-reads the file inside the lock so a token another process already
+ * rotated is adopted instead of burning a (possibly single-use) refresh token.
+ */
+export async function refreshFileCredential(opts: {
+  requested: OAuthCredential;
+  read: () => OAuthCredential | null;
+  write: (next: OAuthCredential) => void;
+  lockPath: string;
+  label: string;
+  refresh: OAuthRefresher;
+  force?: boolean;
+}): Promise<OAuthCredential | null> {
+  const { requested, read, write, refresh, force = false } = opts;
+  return withFileLock(opts.lockPath, opts.label, async () => {
+    const latest = read();
+    if (!latest) return null;
+    if (credentialsChanged(requested, latest)) return latest;
+    if (!force && !isOAuthExpired(latest)) return latest;
+    if (!latest.refresh) {
+      throw new Error(`${opts.label} access token expired and no refresh token`);
+    }
+
+    let next: OAuthCredential;
+    try {
+      next = await refresh(latest);
+    } catch (err) {
+      if (isRefreshReuseError(err)) {
+        const recovered = await recoverRotated(read, latest);
+        if (recovered) return recovered;
+      }
+      throw err;
+    }
+    write(next);
+    return next;
+  });
 }
 
 export async function ensureFreshOAuth(
@@ -219,44 +269,15 @@ export async function ensureFreshOAuth(
   if (!requested) return null;
   if (!force && !isOAuthExpired(requested)) return requested;
 
-  return withOAuthRefreshLock(authPath, persistKey, async () => {
-    const latest = getOAuth(loadAuth(authPath), providerKeys);
-    if (!latest) return null;
-
-    if (credentialsChanged(requested, latest)) {
-      auth[persistKey] = latest;
-      return latest;
-    }
-    if (!force && !isOAuthExpired(latest)) {
-      auth[persistKey] = latest;
-      return latest;
-    }
-    if (!latest.refresh) {
-      throw new Error(
-        `${persistKey} access token expired and no refresh token — run: opencode auth login`,
-      );
-    }
-
-    let next: OAuthCredential;
-    try {
-      next = await refresh(latest);
-    } catch (err) {
-      if (isRefreshReuseError(err)) {
-        const recovered = await recoverRotatedCredential(
-          authPath,
-          providerKeys,
-          latest,
-        );
-        if (recovered) {
-          auth[persistKey] = recovered;
-          return recovered;
-        }
-      }
-      throw err;
-    }
-
-    persistOAuthProvider(persistKey, next, authPath);
-    auth[persistKey] = next;
-    return next;
+  const next = await refreshFileCredential({
+    requested,
+    read: () => getOAuth(loadAuth(authPath), providerKeys),
+    write: (cred) => persistOAuthProvider(persistKey, cred, authPath),
+    lockPath: lockPathFor(authPath, persistKey),
+    label: persistKey,
+    refresh,
+    force,
   });
+  if (next) auth[persistKey] = next;
+  return next;
 }

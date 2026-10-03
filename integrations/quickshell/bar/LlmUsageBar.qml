@@ -1,6 +1,5 @@
 import qs.modules.common
 import qs.modules.common.widgets
-import qs.modules.ii.bar
 import qs.modules.common.functions
 import QtQuick
 import QtQuick.Layouts
@@ -9,7 +8,8 @@ import Quickshell.Io
 import Quickshell.Wayland
 
 /**
- * Self-contained LLM usage bar chip.
+ * Self-contained LLM usage bar chip, styled after Headroom: a chef-hat gauge
+ * in the bar and a warm card popup (usage + history).
  * Lives in the LLMUsage project; loaded via Loader from BarContent.
  * Data: ~/.cache/llm-usage/snapshot.json via project-local bun CLI.
  */
@@ -18,6 +18,8 @@ MouseArea {
 
     // --- state ---
     property bool popupOpen: false
+    property bool popupHovered: false
+    property bool showHistory: false
     property bool ready: false
     property bool checking: false
     property var providers: []
@@ -25,14 +27,22 @@ MouseArea {
     property string severity: "unknown"
     property string lastError: ""
     property string fetchedAt: ""
+    property var tokenSeries: null
+    property var utilization: []
+    property bool historyLoading: false
 
     readonly property string projectRoot: FileUtils.trimFileProtocol(Qt.resolvedUrl("../../.."))
     readonly property string bunPath: "/usr/bin/bun"
     readonly property string entryPath: projectRoot + "/src/index.ts"
     readonly property string cachePath: FileUtils.trimFileProtocol(Directories.home) + "/.cache/llm-usage/snapshot.json"
     readonly property real usedFraction: Math.min(1, Math.max(0, worstUsedPercent / 100))
-    readonly property bool isWarn: severity === "warn"
-    readonly property bool isCrit: severity === "crit" || severity === "error"
+    readonly property bool failed: severity === "error"
+    readonly property color tint: failed ? lu.critical : lu.ramp(usedFraction)
+
+    LuSkin {
+        id: lu
+        dark: Appearance.m3colors.darkmode
+    }
 
     implicitWidth: row.implicitWidth + 10
     implicitHeight: Appearance.sizes.barHeight
@@ -44,7 +54,7 @@ MouseArea {
         try {
             const data = JSON.parse(text)
             root.providers = data.providers || []
-            root.worstUsedPercent = Number(data.worstUsedPercent ?? 0)
+            root.worstUsedPercent = Number(data.headlinePercent ?? data.worstUsedPercent ?? 0)
             root.severity = data.severity || "unknown"
             root.fetchedAt = data.fetchedAt || ""
             root.lastError = ""
@@ -55,90 +65,102 @@ MouseArea {
         }
     }
 
-    function refresh() {
+    // Periodic refreshes reuse a snapshot the systemd timer wrote in the last
+    // 4 minutes; right-click (or the popup's refresh button) forces a live fetch.
+    property bool forceNext: false
+
+    function refresh(force) {
         if (refreshProc.running)
             return
+        root.forceNext = !!force
         root.checking = true
         refreshProc.running = true
     }
 
-    function formatReset(w) {
-        if (w && w.resetAfterSeconds != null && w.resetAfterSeconds >= 0) {
-            const s = Math.floor(w.resetAfterSeconds)
-            const d = Math.floor(s / 86400)
-            const h = Math.floor((s % 86400) / 3600)
-            const m = Math.floor((s % 3600) / 60)
-            if (d > 0) return d + "d " + h + "h"
-            if (h > 0) return h + "h " + m + "m"
-            return m + "m"
-        }
-        return "—"
+    function loadHistory() {
+        if (tokensProc.running)
+            return
+        root.historyLoading = true
+        tokensProc.running = true
+        utilProc.running = true
     }
 
-    function shortId(id) {
-        if (id === "openai") return "OpenAI"
-        if (id === "zai") return "GLM"
-        if (id === "xai") return "Grok"
-        if (id === "anthropic") return "Claude"
-        return id || "?"
+    // --- capacity summary across providers (Headroom's "3 comfortable · 1 tight") ---
+    function tightest(p) {
+        const nums = (p.windows || []).map(w => w.usedPercent).filter(n => n != null)
+        return nums.length ? Math.max(...nums) : null
+    }
+
+    readonly property var capacity: {
+        let comfortable = 0, warming = 0, tight = 0, down = 0
+        let hot = null, room = null
+        for (const p of providers) {
+            const t = p.ok ? tightest(p) : null
+            if (t == null) { down++; continue }
+            if (t < 70) comfortable++
+            else if (t < 85) warming++
+            else tight++
+            if (!hot || t > hot.t) hot = { name: p.name, t: t }
+            if (!room || t < room.t) room = { name: p.name, t: t }
+        }
+        const parts = []
+        if (comfortable) parts.push(comfortable + " comfortable")
+        if (warming) parts.push(warming + " warming")
+        if (tight) parts.push(tight + " tight")
+        if (down) parts.push(down + " unavailable")
+        return {
+            phrase: parts.join(" · "),
+            color: tight ? lu.pressing : warming ? lu.warming : lu.healthy,
+            hot: hot && hot.t >= 70 && room && room.name !== hot.name ? hot : null,
+            room: room
+        }
     }
 
     onClicked: event => {
         if (event.button === Qt.RightButton) {
-            root.refresh()
+            root.refresh(true)
             return
         }
-        root.popupOpen = true
+        root.popupOpen = !root.popupOpen
     }
 
-    onExited: root.popupOpen = false
-
-    Item {
-        id: popupAnchor
-        anchors.fill: parent
-        property bool containsMouse: root.popupOpen && root.containsMouse
+    // close shortly after the pointer leaves both the chip and the popup
+    Timer {
+        id: closeTimer
+        interval: 350
+        onTriggered: {
+            if (!root.containsMouse && !root.popupHovered)
+                root.popupOpen = false
+        }
     }
+    onContainsMouseChanged: if (!containsMouse) closeTimer.restart()
+    onPopupHoveredChanged: if (!popupHovered) closeTimer.restart()
+    onPopupOpenChanged: {
+        if (!popupOpen) root.showHistory = false
+    }
+    onShowHistoryChanged: if (showHistory) root.loadHistory()
 
     RowLayout {
         id: row
         anchors.centerIn: parent
-        spacing: 3
+        spacing: 4
 
-        ClippedFilledCircularProgress {
-            id: circ
+        LuChefHat {
             Layout.alignment: Qt.AlignVCenter
-            lineWidth: Appearance.rounding.unsharpen
-            value: root.usedFraction
-            implicitSize: 20
-            colPrimary: root.isCrit
-                ? Appearance.colors.colError
-                : root.isWarn
-                    ? Appearance.m3colors.m3tertiary
-                    : Appearance.colors.colOnSecondaryContainer
-            accountForLightBleeding: !root.isCrit
-            enableAnimation: false
-
-            Item {
-                anchors.centerIn: parent
-                width: circ.implicitSize
-                height: circ.implicitSize
-                MaterialSymbol {
-                    anchors.centerIn: parent
-                    font.weight: Font.DemiBold
-                    fill: 1
-                    text: "auto_awesome"
-                    iconSize: Appearance.font.pixelSize.normal
-                    color: Appearance.m3colors.m3onSecondaryContainer
-                }
-            }
+            implicitWidth: 19
+            implicitHeight: 19
+            fraction: root.ready ? Math.max(0.04, root.usedFraction) : 0
+            tint: root.tint
         }
 
         StyledText {
             Layout.alignment: Qt.AlignVCenter
-            color: Appearance.colors.colOnLayer1
+            color: root.ready ? root.tint : Appearance.colors.colOnLayer1
             font.pixelSize: Appearance.font.pixelSize.small
+            font.weight: Font.DemiBold
+            font.family: Appearance.font.family.numbers
             text: root.ready
-                ? ("" + Math.round(root.worstUsedPercent || 0))
+                ? (Math.round(root.worstUsedPercent || 0) + "%")
                 : (root.checking ? "…" : "!")
         }
     }
@@ -149,14 +171,14 @@ MouseArea {
         running: true
         repeat: true
         onTriggered: {
-            root.refresh()
+            root.refresh(false)
             interval = 300000 // 5 min
         }
     }
 
     Process {
         id: refreshProc
-        command: [root.bunPath, root.entryPath, "json", "--force"]
+        command: [root.bunPath, root.entryPath, "json", root.forceNext ? "--force" : "--max-age=240"]
         stdout: StdioCollector {
             onStreamFinished: {
                 root.checking = false
@@ -179,6 +201,32 @@ MouseArea {
         }
     }
 
+    Process {
+        id: tokensProc
+        command: [root.bunPath, root.entryPath, "tokens", "--json", "--days=30", "--max-age=900"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root.tokenSeries = JSON.parse(text)
+                } catch (e) {}
+                root.historyLoading = false
+            }
+        }
+        onExited: root.historyLoading = false
+    }
+
+    Process {
+        id: utilProc
+        command: [root.bunPath, root.entryPath, "history", "--json", "--days=30"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root.utilization = JSON.parse(text)
+                } catch (e) {}
+            }
+        }
+    }
+
     FileView {
         id: cacheFile
         path: root.cachePath
@@ -193,94 +241,239 @@ MouseArea {
 
     Component.onCompleted: {
         cacheFile.reload()
-        root.refresh()
+        root.refresh(false)
     }
 
-    // --- popup (inline, no separate type) ---
-    StyledPopup {
-        hoverTarget: popupAnchor
+    // --- popup ---
+    LazyLoader {
+        active: root.popupOpen
 
-        Row {
-            anchors.centerIn: parent
-            spacing: 18
+        component: PanelWindow {
+            id: popupWindow
+            color: "transparent"
 
-            Repeater {
-                model: root.providers
+            readonly property bool vertical: Config.options.bar.vertical
+            readonly property bool bottom: Config.options.bar.bottom
 
-                delegate: Column {
-                    id: col
-                    required property var modelData
-                    spacing: 8
-                    // Wide enough for "Session 5h: 12% · 4h 30m · 0/4000 calls"
-                    width: 200
+            anchors.left: !vertical || (vertical && !bottom)
+            anchors.right: vertical && bottom
+            anchors.top: vertical || (!vertical && !bottom)
+            anchors.bottom: !vertical && bottom
 
-                    StyledPopupHeaderRow {
-                        icon: col.modelData.id === "openai" ? "smart_toy"
-                            : col.modelData.id === "zai" ? "token"
-                            : col.modelData.id === "anthropic" ? "psychology"
-                            : "bolt"
-                        label: {
-                            const name = root.shortId(col.modelData.id)
-                            return col.modelData.plan ? (name + " · " + col.modelData.plan) : name
+            implicitWidth: panel.implicitWidth + Appearance.sizes.elevationMargin * 2
+            implicitHeight: panel.implicitHeight + Appearance.sizes.elevationMargin * 2
+
+            mask: Region {
+                item: panel
+            }
+            exclusionMode: ExclusionMode.Ignore
+            exclusiveZone: 0
+            margins {
+                left: {
+                    if (!popupWindow.vertical)
+                        return Math.max(0, root.QsWindow?.mapFromItem(root, (root.width - popupWindow.implicitWidth) / 2, 0).x ?? 0)
+                    return Appearance.sizes.verticalBarWidth
+                }
+                top: {
+                    if (!popupWindow.vertical)
+                        return Appearance.sizes.barHeight
+                    return Math.max(0, root.QsWindow?.mapFromItem(root, 0, (root.height - popupWindow.implicitHeight) / 2).y ?? 0)
+                }
+                right: Appearance.sizes.verticalBarWidth
+                bottom: Appearance.sizes.barHeight
+            }
+            WlrLayershell.namespace: "quickshell:popup"
+            WlrLayershell.layer: WlrLayer.Overlay
+
+            StyledRectangularShadow {
+                target: panel
+            }
+
+            Rectangle {
+                id: panel
+                anchors.fill: parent
+                anchors.margins: Appearance.sizes.elevationMargin
+                readonly property int columns: root.providers.length >= 4 ? 2 : 1
+                readonly property real cardWidth: 320
+                implicitWidth: content.width + 28
+                implicitHeight: content.implicitHeight + 28
+                radius: 12
+                color: lu.bg
+                border.width: 1
+                border.color: lu.edge
+
+                HoverHandler {
+                    onHoveredChanged: root.popupHovered = hovered
+                }
+
+                ColumnLayout {
+                    id: content
+                    anchors.centerIn: parent
+                    width: panel.columns * panel.cardWidth + (panel.columns - 1) * 10
+                    spacing: 10
+
+                    // header
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        LuChefHat {
+                            implicitWidth: 22
+                            implicitHeight: 22
+                            fraction: 1
+                            tint: lu.clay
+                            outline: false
                         }
-                    }
-
-                    Column {
-                        spacing: 4
-                        width: parent.width
-                        visible: !!col.modelData.ok
-
-                        StyledPopupValueRow {
-                            icon: "percent"
-                            label: "Used:"
-                            value: col.modelData.usedPercent != null
-                                ? (Math.round(col.modelData.usedPercent) + "%")
-                                : "—"
+                        StyledText {
+                            text: root.showHistory ? "Usage History" : "LLM Usage"
+                            color: lu.ink
+                            font.pixelSize: 16
+                            font.weight: Font.Bold
                         }
-
-                        Repeater {
-                            model: col.modelData.windows || []
-                            delegate: StyledPopupValueRow {
-                                id: winRow
-                                required property var modelData
-                                icon: "timelapse"
-                                label: (winRow.modelData.label || "?") + ":"
-                                value: {
-                                    if (winRow.modelData.usedPercent != null) {
-                                        const reset = root.formatReset(winRow.modelData)
-                                        const note = winRow.modelData.note ? (" · " + winRow.modelData.note) : ""
-                                        return Math.round(winRow.modelData.usedPercent) + "% · " + reset + note
-                                    }
-                                    return winRow.modelData.note || "—"
-                                }
+                        Item { Layout.fillWidth: true }
+                        StyledText {
+                            visible: root.showHistory
+                            text: "tokens · from local logs"
+                            color: lu.faint
+                            font.pixelSize: 11
+                        }
+                        MaterialSymbol {
+                            visible: !root.showHistory
+                            text: "refresh"
+                            iconSize: 18
+                            color: refreshArea.containsMouse ? lu.ink : lu.faint
+                            RotationAnimator on rotation {
+                                running: root.checking
+                                from: 0
+                                to: 360
+                                duration: 900
+                                loops: Animation.Infinite
+                            }
+                            MouseArea {
+                                id: refreshArea
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.refresh(true)
                             }
                         }
                     }
 
-                    Column {
-                        spacing: 4
-                        width: parent.width
-                        visible: !col.modelData.ok
-                        StyledPopupValueRow {
-                            icon: "error"
-                            label: "Error:"
-                            value: col.modelData.error || "unknown"
+                    // capacity line
+                    RowLayout {
+                        visible: !root.showHistory && root.capacity.phrase !== ""
+                        Layout.leftMargin: 2
+                        spacing: 7
+                        Rectangle {
+                            implicitWidth: 7
+                            implicitHeight: 7
+                            radius: 3.5
+                            color: root.capacity.color
+                        }
+                        StyledText {
+                            text: root.capacity.phrase
+                            color: lu.ink2
+                            font.pixelSize: 12
                         }
                     }
-                }
-            }
 
-            Column {
-                visible: !root.ready || (root.providers || []).length === 0
-                spacing: 6
-                StyledPopupHeaderRow {
-                    icon: "hourglass_empty"
-                    label: "LLM Usage"
-                }
-                StyledPopupValueRow {
-                    icon: "info"
-                    label: "Status:"
-                    value: root.lastError || "Loading…"
+                    // "use this next" banner
+                    Rectangle {
+                        visible: !root.showHistory && !!root.capacity.hot
+                        Layout.fillWidth: true
+                        implicitHeight: bannerRow.implicitHeight + 12
+                        radius: 8
+                        color: lu.alpha(lu.healthy, 0.10)
+                        border.width: 1
+                        border.color: lu.alpha(lu.healthy, 0.30)
+                        RowLayout {
+                            id: bannerRow
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: 9
+                            spacing: 7
+                            MaterialSymbol {
+                                text: "subdirectory_arrow_right"
+                                iconSize: 14
+                                color: lu.healthy
+                            }
+                            StyledText {
+                                textFormat: Text.StyledText
+                                text: root.capacity.hot
+                                    ? ("<b>" + root.capacity.hot.name + "</b> " + Math.round(root.capacity.hot.t)
+                                        + "% used · most room: <b>" + root.capacity.room.name + "</b> " + Math.round(root.capacity.room.t) + "%")
+                                    : ""
+                                color: lu.ink2
+                                font.pixelSize: 12
+                            }
+                        }
+                    }
+
+                    // cards
+                    GridLayout {
+                        visible: !root.showHistory
+                        Layout.fillWidth: true
+                        columns: panel.columns
+                        columnSpacing: 10
+                        rowSpacing: 10
+                        Repeater {
+                            model: root.providers
+                            delegate: LuCard {
+                                required property var modelData
+                                Layout.preferredWidth: panel.cardWidth
+                                Layout.fillHeight: true
+                                skin: lu
+                                provider: modelData
+                            }
+                        }
+                    }
+
+                    StyledText {
+                        visible: !root.showHistory && !root.ready
+                        text: root.lastError || "Loading…"
+                        color: lu.faint
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    LuHistory {
+                        visible: root.showHistory
+                        Layout.fillWidth: true
+                        skin: lu
+                        tokenSeries: root.tokenSeries
+                        utilization: root.utilization
+                        loading: root.historyLoading
+                    }
+
+                    // footer
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 1
+                        color: lu.edge
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        StyledText {
+                            text: root.checking ? "Updating…" : ("Updated " + lu.ago(root.fetchedAt))
+                            color: lu.faint
+                            font.pixelSize: 11
+                        }
+                        Item { Layout.fillWidth: true }
+                        MaterialSymbol {
+                            text: root.showHistory ? "dashboard" : "bar_chart"
+                            iconSize: 18
+                            color: histArea.containsMouse ? lu.ink : lu.ink2
+                            MouseArea {
+                                id: histArea
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showHistory = !root.showHistory
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -5,6 +5,7 @@ import {
   type Thresholds,
   type UsageSnapshot,
 } from "./types.ts";
+import { paceFor } from "./pace.ts";
 
 export function severityFromPercent(
   usedPercent: number | undefined,
@@ -43,8 +44,13 @@ export function finalizeProvider(
   const severity = partial.ok
     ? severityFromPercent(used, thresholds)
     : "error";
+  const windows = partial.windows.map((w) => {
+    const pace = paceFor(w);
+    return pace ? { ...w, pace } : w;
+  });
   return {
     ...partial,
+    windows,
     usedPercent: used,
     severity,
   };
@@ -53,12 +59,17 @@ export function finalizeProvider(
 export function finalizeSnapshot(
   providers: ProviderStatus[],
   thresholds: Thresholds = DEFAULT_THRESHOLDS,
+  aggregate: "max" | "avg" = "max",
 ): UsageSnapshot {
   const nums = providers
     .filter((p) => p.ok)
     .map((p) => p.usedPercent)
     .filter((n): n is number => typeof n === "number");
   const worst = nums.length ? Math.max(...nums) : undefined;
+  const headline =
+    aggregate === "avg" && nums.length
+      ? nums.reduce((a, b) => a + b, 0) / nums.length
+      : worst;
   let severity: Severity = severityFromPercent(worst, thresholds);
   if (providers.length > 0 && providers.every((p) => !p.ok)) {
     severity = "error";
@@ -71,6 +82,7 @@ export function finalizeSnapshot(
     fetchedAt: new Date().toISOString(),
     providers,
     worstUsedPercent: worst,
+    headlinePercent: headline,
     severity,
   };
 }

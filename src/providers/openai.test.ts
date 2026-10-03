@@ -67,7 +67,7 @@ describe("fetchOpenAI", () => {
   test("missing oauth", async () => {
     const r = await fetchOpenAI({});
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/No OpenAI OAuth/i);
+    expect(r.error).toMatch(/No ChatGPT OAuth/i);
   });
 
   test("default all mode lists every reset expiry", async () => {

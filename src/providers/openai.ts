@@ -3,10 +3,14 @@ import {
   type AuthFile,
   type OAuthCredential,
 } from "../auth.ts";
+import { refreshOpenAIOAuth } from "../oauth-refresh.ts";
 import {
-  ensureFreshOAuth,
-  refreshOpenAIOAuth,
-} from "../oauth-refresh.ts";
+  callWithOAuth,
+  CredentialError,
+  loadStores,
+  openaiSources,
+  type OAuthSource,
+} from "../credentials.ts";
 import { finalizeProvider } from "../severity.ts";
 import type { ProviderStatus, UsageWindow } from "../types.ts";
 import {
@@ -77,6 +81,7 @@ function mapWindow(
     remainingPercent: clampPercent(100 - usedPercent),
     resetAfterSeconds: w.reset_after_seconds,
     resetsAt: isoFromEpochSec(w.reset_at),
+    windowSeconds: w.limit_window_seconds,
   };
 }
 
@@ -174,63 +179,22 @@ function mapResetCredits(
   return out;
 }
 
-export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
+export async function fetchOpenAI(
+  auth?: AuthFile,
+  sources: OAuthSource[] = openaiSources(loadStores(auth)),
+): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  let oauth: OAuthCredential | null;
+  const base = { id: "openai" as const, name: "OpenAI", fetchedAt: now };
+
   try {
-    oauth = await ensureFreshOAuth(
-      auth,
-      ["openai", "codex", "chatgpt"],
-      refreshOpenAIOAuth,
-      "openai",
+    const {
+      result: [body, resets],
+      source,
+    } = await callWithOAuth(
+      sources,
+      () => refreshOpenAIOAuth,
+      (cred) => Promise.all([fetchWham(cred), fetchResetCredits(cred)]),
     );
-  } catch (err) {
-    return finalizeProvider({
-      id: "openai",
-      name: "OpenAI",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-      windows: [],
-      fetchedAt: now,
-    });
-  }
-
-  if (!oauth) {
-    return finalizeProvider({
-      id: "openai",
-      name: "OpenAI",
-      ok: false,
-      error:
-        "No OpenAI OAuth in OpenCode auth.json (run: opencode auth login)",
-      windows: [],
-      fetchedAt: now,
-    });
-  }
-
-  try {
-    let body: WhamResponse;
-    let resets: ResetCreditsResponse | null = null;
-    try {
-      [body, resets] = await Promise.all([
-        fetchWham(oauth),
-        fetchResetCredits(oauth),
-      ]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("401") && !msg.includes("token_expired")) throw err;
-      oauth = await ensureFreshOAuth(
-        auth,
-        ["openai", "codex", "chatgpt"],
-        refreshOpenAIOAuth,
-        "openai",
-        true,
-      );
-      if (!oauth) throw err;
-      [body, resets] = await Promise.all([
-        fetchWham(oauth),
-        fetchResetCredits(oauth),
-      ]);
-    }
 
     const windows: UsageWindow[] = [];
     const primary = mapWindow(
@@ -263,24 +227,22 @@ export async function fetchOpenAI(auth: AuthFile): Promise<ProviderStatus> {
     );
 
     return finalizeProvider({
-      id: "openai",
-      name: "OpenAI",
+      ...base,
       plan: body.plan_type,
+      source: source.label,
       ok: true,
       windows,
-      fetchedAt: now,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return finalizeProvider({
-      id: "openai",
-      name: "OpenAI",
+      ...base,
       ok: false,
-      error: msg.includes("401") || msg.includes("token_expired")
-        ? "OpenAI token expired — refresh failed. Run: opencode auth login"
-        : msg,
+      error:
+        err instanceof CredentialError && msg === "no credentials"
+          ? "No ChatGPT OAuth — log in with codex (or pi /login)"
+          : msg,
       windows: [],
-      fetchedAt: now,
     });
   }
 }

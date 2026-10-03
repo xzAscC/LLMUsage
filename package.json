@@ -1,6 +1,6 @@
 {
   "name": "llm-usage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -10,7 +10,9 @@
     "start": "bun run src/index.ts",
     "status": "bun run src/index.ts status",
     "waybar": "bun run src/index.ts waybar",
-    "popup": "bun run src/index.ts popup",
+    "doctor": "bun run src/index.ts doctor",
+    "history": "bun run src/index.ts history",
+    "tokens": "bun run src/index.ts tokens",
     "install-local": "bash ./install.sh"
   },
   "engines": {
