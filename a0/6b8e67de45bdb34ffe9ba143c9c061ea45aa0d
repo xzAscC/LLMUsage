@@ -1,0 +1,39 @@
+README.md
+  s_e655d3cd0ceb36::t_13e9d6374690d3 179,192,196
+integrations/quickshell/bar/LuCard.qml
+  s_e655d3cd0ceb36::t_71345476a40ada 25,50-51
+integrations/quickshell/bar/LuSkin.qml
+  s_e655d3cd0ceb36::t_7a888914e6bf9f 40-43,45,49
+src/collect.ts
+  s_e655d3cd0ceb36::t_100b592e12afb6 3,13,26-31
+src/config.test.ts
+  s_e655d3cd0ceb36::t_e93c2f6c5e4f4a 2,5,27-41
+src/config.ts
+  s_e655d3cd0ceb36::t_a2344ea3507a1f 2-3,20-26,28-31,52,67-82,100
+src/doctor.ts
+  s_e655d3cd0ceb36::t_3a23f93feed73a 4,53
+src/format.ts
+  s_e655d3cd0ceb36::t_7bee833ce09307 106
+src/providers/anthropic.test.ts
+  s_e655d3cd0ceb36::t_ecb5a0e9ef9c77 2,125-147
+src/providers/anthropic.ts
+  s_e655d3cd0ceb36::t_b4f1a18805b92a 2-3,6,210-215,219,222-224
+src/types.ts
+  s_e655d3cd0ceb36::t_bb9c001fbaf886 6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a06b8e67de45bdb34ffe9ba143c9c061ea45aa0d",
+  "prompts": {},
+  "sessions": {
+    "s_e655d3cd0ceb36": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0aca193-d14e-488f-aa4a-4bd8bd20a2eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
