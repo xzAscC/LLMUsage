@@ -1,6 +1,9 @@
 import type { AuthFile, OAuthCredential } from "../auth.ts";
+import { join } from "node:path";
+import { claudeAccountId, type ClaudeAccount } from "../config.ts";
 import {
   anthropicSources,
+  claudeCodeSource,
   callWithOAuth,
   CredentialError,
   loadStores,
@@ -204,12 +207,21 @@ function shortError(err: unknown): string {
   return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
 }
 
+/** Sources for an extra Claude Code login: only that config dir's own credentials. */
+export function claudeAccountSources(account: ClaudeAccount): OAuthSource[] {
+  const source = claudeCodeSource(join(account.dir, ".credentials.json"));
+  return source ? [{ ...source, label: `Claude Code (${account.dir})` }] : [];
+}
+
 export async function fetchAnthropic(
   auth?: AuthFile,
   sources: OAuthSource[] = anthropicSources(loadStores(auth)),
+  account?: ClaudeAccount,
 ): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  const base = { id: "anthropic" as const, name: "Claude", fetchedAt: now };
+  const base = account
+    ? { id: claudeAccountId(account), name: `Claude ${account.name}`, fetchedAt: now }
+    : { id: "anthropic" as const, name: "Claude", fetchedAt: now };
   try {
     const { result: body, source } = await callWithOAuth(
       sources,

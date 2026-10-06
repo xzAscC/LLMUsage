@@ -3,6 +3,8 @@ export type ProviderId =
   | "zai"
   | "xai"
   | "anthropic"
+  /** extra Claude account from config `claude.accounts` */
+  | `anthropic-${string}`
   | "kimi"
   | "minimax";
 

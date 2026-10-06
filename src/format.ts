@@ -103,6 +103,6 @@ function shortName(p: ProviderStatus): string {
     case "minimax":
       return "MMX";
     default:
-      return p.id;
+      return p.id.startsWith("anthropic-") ? `CLD ${p.name.slice("Claude ".length)}` : p.id;
   }
 }

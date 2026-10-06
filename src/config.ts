@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { configPath } from "./paths.ts";
 import { DEFAULT_THRESHOLDS, type ProviderId, type Thresholds } from "./types.ts";
 
@@ -15,7 +17,18 @@ export interface NotifyConfig {
   refilled: boolean;
 }
 
+export interface ClaudeAccount {
+  /** card title suffix, e.g. "OSU" → "Claude OSU"; also names the provider id */
+  name: string;
+  /** Claude Code config dir holding `.credentials.json` (CLAUDE_CONFIG_DIR) */
+  dir: string;
+}
+
 export interface AppConfig {
+  claude: {
+    /** Extra Claude Code logins, each shown as its own card */
+    accounts: ClaudeAccount[];
+  };
   openai: {
     /** How to show ChatGPT rate-limit reset credits. Default: "all" */
     resetCreditsDisplay: ResetCreditsDisplay;
@@ -36,6 +49,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
+  claude: { accounts: [] },
   openai: { resetCreditsDisplay: "all" },
   xai: { resetCreditsDisplay: "all" },
   summary: "max",
@@ -48,6 +62,22 @@ export const DEFAULT_CONFIG: AppConfig = {
 function asDisplay(v: unknown): ResetCreditsDisplay {
   if (v === "summary" || v === "all") return v;
   return DEFAULT_CONFIG.openai.resetCreditsDisplay;
+}
+
+function expandHome(p: string): string {
+  return p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p;
+}
+
+function asAccounts(v: unknown): ClaudeAccount[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((a) => a && typeof a.name === "string" && a.name.trim() && typeof a.dir === "string" && a.dir)
+    .map((a) => ({ name: a.name.trim(), dir: expandHome(a.dir) }));
+}
+
+/** Provider id for an extra Claude account: "OSU" → "anthropic-osu". */
+export function claudeAccountId(a: ClaudeAccount): `anthropic-${string}` {
+  return `anthropic-${a.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 }
 
 function asNumber(v: unknown, fallback: number): number {
@@ -67,6 +97,7 @@ export function loadConfig(path = configPath()): AppConfig {
       ? raw.notify.thresholds.filter((n: unknown) => typeof n === "number")
       : d.notify.thresholds;
     return {
+      claude: { accounts: asAccounts(raw.claude?.accounts) },
       openai: { resetCreditsDisplay: asDisplay(raw.openai?.resetCreditsDisplay) },
       xai: { resetCreditsDisplay: asDisplay(raw.xai?.resetCreditsDisplay) },
       summary: raw.summary === "avg" ? "avg" : "max",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fetchAnthropic } from "./anthropic.ts";
+import { claudeAccountSources, fetchAnthropic } from "./anthropic.ts";
 import type { AuthFile } from "../auth.ts";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -120,6 +120,29 @@ describe("fetchAnthropic", () => {
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/rate-limited/i);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("extra account reads its own config dir as a separate provider", async () => {
+    const dir = writeClaudeCreds({
+      accessToken: "SECRET_TEAM_TOKEN",
+      expiresAt: Date.now() + 3600_000,
+      subscriptionType: "team",
+    });
+    process.env.CLAUDE_CREDENTIALS_PATH = "/no/such/credentials.json";
+    let seen = "";
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seen = (init.headers as Record<string, string>).Authorization!;
+      return new Response(JSON.stringify({ five_hour: { utilization: 3 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const account = { name: "OSU", dir };
+    const r = await fetchAnthropic({}, claudeAccountSources(account), account);
+    expect(r.ok).toBe(true);
+    expect(r.id).toBe("anthropic-osu");
+    expect(r.name).toBe("Claude OSU");
+    expect(r.plan).toBe("team");
+    expect(seen).toBe("Bearer SECRET_TEAM_TOKEN");
     rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { collectUsage } from "./collect.ts";
+import { claudeAccountSources } from "./providers/anthropic.ts";
 import { loadConfig } from "./config.ts";
 import {
   anthropicSources,
@@ -49,6 +50,7 @@ export async function runDoctor(): Promise<string> {
   out.push("Credentials (first usable wins; refresh only while the owning agent is idle)");
   const groups: [string, string[]][] = [
     ["Claude", anthropicSources(stores).map(oauthLine)],
+    ...cfg.claude.accounts.map((a): [string, string[]] => [`Claude ${a.name}`, claudeAccountSources(a).map(oauthLine)]),
     ["OpenAI", openaiSources(stores).map(oauthLine)],
     ["Grok / xAI", xaiSources(stores).map(oauthLine)],
     ["GLM / Z.AI", zaiKeys(stores).map(keyLine)],

@@ -22,7 +22,7 @@ Rectangle {
         xai: "https://grok.com/?_s=usage",
         kimi: "https://www.kimi.com/code/console",
         minimax: "https://platform.minimax.io/user-center/payment/token-plan"
-    })[provider.id] || ""
+    })[skin.baseId(provider.id)] || ""
 
     // note-only windows (credits, reset credits) become compact chips
     function buildChips() {
@@ -47,7 +47,8 @@ Rectangle {
         return out
     }
 
-    readonly property string title: ({
+    // extra Claude accounts keep their own name ("Claude OSU") so the two cards differ
+    readonly property string title: provider.id !== skin.baseId(provider.id) ? provider.name : ({
         anthropic: "Claude", openai: "OpenAI", zai: "GLM", xai: "Grok", kimi: "Kimi", minimax: "MiniMax"
     })[provider.id] || provider.name
 

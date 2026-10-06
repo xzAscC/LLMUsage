@@ -173,6 +173,7 @@ MIT
 
 ```json
 {
+  "claude": { "accounts": [{ "name": "OSU", "dir": "~/.claude-alt" }] },
   "openai": { "resetCreditsDisplay": "all" },
   "xai": { "resetCreditsDisplay": "summary" },
   "summary": "max",
@@ -185,10 +186,11 @@ MIT
 
 | Key | Meaning |
 |-----|---------|
+| `claude.accounts` | Extra Claude Code logins (another `CLAUDE_CONFIG_DIR`), each shown as its own card `Claude <name>` with id `anthropic-<name>` |
 | `*.resetCreditsDisplay` | `"all"` lists every reset credit / expiry; `"summary"` shows `4 available · next exp 7/18` |
 | `summary` | Bar number: `"max"` = tightest window (default), `"avg"` = mean across providers |
 | `thresholds` | Ring / Waybar colour levels |
-| `disabled` | Provider ids to skip: `anthropic`, `openai`, `zai`, `xai`, `kimi`, `minimax` |
+| `disabled` | Provider ids to skip: `anthropic`, `anthropic-<name>`, `openai`, `zai`, `xai`, `kimi`, `minimax` |
 | `notify.thresholds` | Alert once when a window climbs past each level |
 | `notify.exhausted` | Alert at 100% and again when the window resets |
 | `notify.pace` | Predictive alert when a window falls into pace deficit |

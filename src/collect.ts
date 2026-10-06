@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from "node:fs";
 import type { AuthFile } from "./auth.ts";
-import { loadConfig } from "./config.ts";
+import { claudeAccountId, loadConfig } from "./config.ts";
 import { loadStores } from "./credentials.ts";
 import { appendHistory } from "./history.ts";
 import { cacheDir, cacheSnapshotPath } from "./paths.ts";
@@ -10,7 +10,7 @@ import { secondsUntil } from "./util.ts";
 import { fetchOpenAI } from "./providers/openai.ts";
 import { fetchZai } from "./providers/zai.ts";
 import { fetchXai } from "./providers/xai.ts";
-import { fetchAnthropic } from "./providers/anthropic.ts";
+import { claudeAccountSources, fetchAnthropic } from "./providers/anthropic.ts";
 import { fetchKimi } from "./providers/kimi.ts";
 import { fetchMinimax } from "./providers/minimax.ts";
 
@@ -23,6 +23,12 @@ export async function collectUsage(opencode?: AuthFile): Promise<UsageSnapshot> 
   const off = new Set(cfg.disabled);
   const jobs: [string, () => Promise<ProviderStatus | null>][] = [
     ["anthropic", () => fetchAnthropic(stores.opencode)],
+    ...cfg.claude.accounts.map(
+      (a): [string, () => Promise<ProviderStatus | null>] => [
+        claudeAccountId(a),
+        () => fetchAnthropic(stores.opencode, claudeAccountSources(a), a),
+      ],
+    ),
     ["openai", () => fetchOpenAI(stores.opencode)],
     ["zai", () => fetchZai(stores.opencode)],
     ["xai", () => fetchXai(stores.opencode)],

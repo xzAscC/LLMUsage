@@ -37,10 +37,16 @@ QtObject {
     }
 
     // per-provider monogram + accent (our own letters, no logos)
+    // extra Claude accounts ("anthropic-osu") share Claude's monogram and accent
+    function baseId(id) {
+        return String(id).startsWith("anthropic-") ? "anthropic" : id
+    }
     function letter(id) {
+        id = baseId(id)
         return ({ anthropic: "C", openai: "O", zai: "G", xai: "X", kimi: "K", minimax: "M" })[id] || "?"
     }
     function accent(id) {
+        id = baseId(id)
         if (id === "anthropic") return pressing
         if (id === "openai") return healthy
         if (id === "zai") return runaway
