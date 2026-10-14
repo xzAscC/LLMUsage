@@ -296,7 +296,10 @@ MouseArea {
                 readonly property int columns: root.providers.length >= 4 ? 2 : 1
                 readonly property real cardWidth: 320
                 implicitWidth: content.width + 28
-                implicitHeight: content.implicitHeight + 28
+                // switching views never shrinks the panel: a shorter view would
+                // pull the toggle out from under the pointer and close the popup
+                property real minHeight: 0
+                implicitHeight: Math.max(content.implicitHeight + footer.implicitHeight + 38, minHeight)
                 radius: 12
                 color: lu.bg
                 border.width: 1
@@ -308,7 +311,9 @@ MouseArea {
 
                 ColumnLayout {
                     id: content
-                    anchors.centerIn: parent
+                    anchors.top: parent.top
+                    anchors.topMargin: 14
+                    anchors.horizontalCenter: parent.horizontalCenter
                     width: panel.columns * panel.cardWidth + (panel.columns - 1) * 10
                     spacing: 10
 
@@ -444,8 +449,17 @@ MouseArea {
                         utilization: root.utilization
                         loading: root.historyLoading
                     }
+                }
 
-                    // footer
+                // footer, pinned to the bottom edge so the view toggle stays put
+                ColumnLayout {
+                    id: footer
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 14
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: content.width
+                    spacing: 10
+
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 1
@@ -470,7 +484,10 @@ MouseArea {
                                 anchors.margins: -4
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showHistory = !root.showHistory
+                                onClicked: {
+                                    panel.minHeight = panel.height
+                                    root.showHistory = !root.showHistory
+                                }
                             }
                         }
                     }
