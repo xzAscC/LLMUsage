@@ -319,6 +319,11 @@ export function xaiSources(s: Stores): OAuthSource[] {
   ]);
 }
 
+/** Google Antigravity via the pi-antigravity extension (`/login antigravity`). */
+export function antigravitySources(s: Stores): OAuthSource[] {
+  return compact([authFileSource("pi", s.piPath, s.pi, ["antigravity", "google-antigravity"])]);
+}
+
 function envKeys(names: string[]): ApiKeySource[] {
   return names
     .filter((n) => process.env[n])

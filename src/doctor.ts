@@ -5,6 +5,7 @@ import { claudeAccountSources } from "./providers/anthropic.ts";
 import { loadConfig } from "./config.ts";
 import {
   anthropicSources,
+  antigravitySources,
   kimiTokens,
   loadStores,
   minimaxKeys,
@@ -53,6 +54,7 @@ export async function runDoctor(): Promise<string> {
     ...cfg.claude.accounts.map((a): [string, string[]] => [`Claude ${a.name}`, claudeAccountSources(a).map(oauthLine)]),
     ["OpenAI", openaiSources(stores).map(oauthLine)],
     ["Grok / xAI", xaiSources(stores).map(oauthLine)],
+    ["Antigravity", antigravitySources(stores).map(oauthLine)],
     ["GLM / Z.AI", zaiKeys(stores).map(keyLine)],
     ["Kimi", kimiTokens(configDir()).map(keyLine)],
     ["MiniMax", minimaxKeys(stores).map(keyLine)],

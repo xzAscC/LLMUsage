@@ -13,7 +13,7 @@ import {
   getOAuth,
   loadAuth,
 } from "./auth.ts";
-import { opencodeAuthPath } from "./paths.ts";
+import { opencodeAuthPath, piAgentDir } from "./paths.ts";
 import { fetchJson } from "./util.ts";
 
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -22,6 +22,8 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 /** OpenCode's xAI OAuth client; the Grok CLI stores its own id in ~/.grok/auth.json. */
 export const XAI_OPENCODE_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const SKEW_MS = 120_000;
 const REFRESH_LOCK_POLL_MS = 25;
@@ -47,12 +49,14 @@ async function postRefresh(
   tokenUrl: string,
   clientId: string,
   refreshToken: string,
+  clientSecret?: string,
 ): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
     client_id: clientId,
   });
+  if (clientSecret) body.set("client_secret", clientSecret);
   return fetchJson<TokenResponse>(tokenUrl, {
     method: "POST",
     headers: {
@@ -98,6 +102,39 @@ export function xaiRefresher(clientId = XAI_OPENCODE_CLIENT_ID) {
     const resp = await postRefresh(XAI_TOKEN_URL, clientId, oauth.refresh);
     return applyTokenResponse(oauth, resp);
   };
+}
+
+/**
+ * Google's Antigravity desktop OAuth client, which made pi's login. It is a
+ * public installed-app client, but it is not stored in this repo: it comes
+ * from $ANTIGRAVITY_CLIENT_ID/$ANTIGRAVITY_CLIENT_SECRET, else from the
+ * pi-antigravity extension installed in pi.
+ */
+export async function antigravityClient(): Promise<{ id: string; secret: string }> {
+  const id = process.env.ANTIGRAVITY_CLIENT_ID;
+  const secret = process.env.ANTIGRAVITY_CLIENT_SECRET;
+  if (id && secret) return { id, secret };
+  const path = join(piAgentDir(), "npm", "node_modules", "pi-antigravity", "src", "auth", "oauth.ts");
+  try {
+    const m = await import(path);
+    if (typeof m.CLIENT_ID === "string" && m.CLIENT_ID && typeof m.CLIENT_SECRET === "string" && m.CLIENT_SECRET) {
+      return { id: m.CLIENT_ID, secret: m.CLIENT_SECRET };
+    }
+  } catch {
+    // pi-antigravity not installed here
+  }
+  throw new Error(
+    "Antigravity OAuth client not found: install pi-antigravity in pi, or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
+  );
+}
+
+export async function googleRefresher(
+  oauth: OAuthCredential,
+): Promise<OAuthCredential> {
+  if (!oauth.refresh) throw new Error("Antigravity OAuth missing refresh token");
+  const client = await antigravityClient();
+  const resp = await postRefresh(GOOGLE_TOKEN_URL, client.id, oauth.refresh, client.secret);
+  return applyTokenResponse(oauth, resp);
 }
 
 export function persistOAuthProvider(

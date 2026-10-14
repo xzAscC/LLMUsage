@@ -6,7 +6,8 @@ export type ProviderId =
   /** extra Claude account from config `claude.accounts` */
   | `anthropic-${string}`
   | "kimi"
-  | "minimax";
+  | "minimax"
+  | "antigravity";
 
 export type Severity = "ok" | "warn" | "crit" | "error" | "unknown";
 

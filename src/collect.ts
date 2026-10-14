@@ -13,6 +13,7 @@ import { fetchXai } from "./providers/xai.ts";
 import { claudeAccountSources, fetchAnthropic } from "./providers/anthropic.ts";
 import { fetchKimi } from "./providers/kimi.ts";
 import { fetchMinimax } from "./providers/minimax.ts";
+import { fetchAntigravity } from "./providers/antigravity.ts";
 
 /** How long a last-good reading may stand in for a failing provider. */
 const STALE_MAX_MS = 3 * 86400_000;
@@ -32,6 +33,7 @@ export async function collectUsage(opencode?: AuthFile): Promise<UsageSnapshot> 
     ["openai", () => fetchOpenAI(stores.opencode)],
     ["zai", () => fetchZai(stores.opencode)],
     ["xai", () => fetchXai(stores.opencode)],
+    ["antigravity", () => fetchAntigravity(stores.opencode)],
     ["kimi", () => fetchKimi()],
     ["minimax", () => fetchMinimax(stores.opencode)],
   ];

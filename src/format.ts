@@ -32,16 +32,17 @@ export function formatHuman(snapshot: UsageSnapshot): string {
     if (p.stale) {
       lines.push(`  stale: as of ${ago(p.asOf)} — ${p.error || "refresh failed"}`);
     }
+    const pad = Math.max(12, ...p.windows.map((w) => w.label.length));
     for (const w of p.windows) {
       if (w.usedPercent != null) {
         const reset = formatReset(w.resetsAt, w.resetAfterSeconds);
         const extra = w.note ? `  (${w.note})` : "";
         const pace = w.pace ? `  · ${paceSummary(w.pace)}` : "";
         lines.push(
-          `  ${w.label.padEnd(12)} ${bar(w.usedPercent)} ${Math.round(w.usedPercent).toString().padStart(3)}%  reset ${reset}${pace}${extra}`,
+          `  ${w.label.padEnd(pad)} ${bar(w.usedPercent)} ${Math.round(w.usedPercent).toString().padStart(3)}%  reset ${reset}${pace}${extra}`,
         );
       } else if (w.note) {
-        lines.push(`  ${w.label.padEnd(12)} ${w.note}`);
+        lines.push(`  ${w.label.padEnd(pad)} ${w.note}`);
       }
     }
     lines.push("");
@@ -102,6 +103,8 @@ function shortName(p: ProviderStatus): string {
       return "KMI";
     case "minimax":
       return "MMX";
+    case "antigravity":
+      return "AGY";
     default:
       return p.id.startsWith("anthropic-") ? `CLD ${p.name.slice("Claude ".length)}` : p.id;
   }

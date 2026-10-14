@@ -1,6 +1,6 @@
 # LLMUsage
 
-**Track Claude / ChatGPT / GLM / Grok / Kimi / MiniMax subscription usage from your Hyprland bar.**
+**Track Claude / ChatGPT / GLM / Grok / Antigravity / Kimi / MiniMax subscription usage from your Hyprland bar.**
 
 There are plenty of LLM usage monitors — web dashboards, browser extensions, Electron widgets, macOS menu-bar apps like [Headroom](https://github.com/BioInfo/headroom). Most of them fall short if you actually live on a tiling compositor:
 
@@ -26,6 +26,7 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 - **OpenAI / Codex (ChatGPT OAuth)** — rate windows, credit balance, **rate-limit reset credits**
 - **GLM / Z.AI Coding Plan** — session 5h + weekly token quotas, plan name
 - **Grok / xAI** — weekly SuperGrok pool + **usage-limit resets**
+- **Google Antigravity** — Gemini and Claude+GPT pools, 5h + weekly each, plan from the paid tier
 - **Kimi** and **MiniMax** coding plans — optional, shown only when a token/key is configured
 - **Pace vs even burn** on every rolling window: `14% in reserve`, `on pace · lands ~98%`, `8% in deficit · runs out ~21:40`
 - **Stale, not blank** — when a refresh fails, the last good reading stays (dimmed, “as of 2h ago”) for up to 3 days
@@ -44,6 +45,7 @@ First usable source wins; a token rejected with 401 falls through to the next on
 | Claude | `~/.claude/.credentials.json` → pi `anthropic` → OpenCode `anthropic` |
 | OpenAI | `~/.codex/auth.json` → pi `openai-codex` → OpenCode `openai` |
 | Grok / xAI | `~/.grok/auth.json` (grok CLI) → pi `xai` → OpenCode `xai` |
+| Antigravity | pi `antigravity` ([pi-antigravity](https://github.com/Rahularya01/pi-antigravity), `/login antigravity`) |
 | GLM | `$ZAI_API_KEY` / `$ZHIPUAI_API_KEY` / `$GLM_API_KEY` → `~/.z-ai-api-key` → pi `zai` → OpenCode `zai-coding-plan` |
 | Kimi | `$KIMI_TOKEN` → `~/.config/llm-usage/kimi-token` (kimi.com `localStorage.access_token`, ~30 days) |
 | MiniMax | `$MINIMAX_API_KEY` → `~/.minimax-api-key` → pi / OpenCode `minimax` |
@@ -139,7 +141,7 @@ Reload the shell, e.g. `killall qs; qs -c ii &`.
 Claude Code / Codex / pi / grok CLI / OpenCode credential files
                                │  (refresh only if owner idle)
                                ▼
-        providers (Anthropic / ChatGPT / Z.AI / xAI / Kimi / MiniMax APIs)
+        providers (Anthropic / ChatGPT / Z.AI / xAI / Antigravity / Kimi / MiniMax APIs)
                                │
           ┌────────────────────┼─────────────────────────┐
           ▼                    ▼                         ▼
@@ -190,7 +192,7 @@ MIT
 | `*.resetCreditsDisplay` | `"all"` lists every reset credit / expiry; `"summary"` shows `4 available · next exp 7/18` |
 | `summary` | Bar number: `"max"` = tightest window (default), `"avg"` = mean across providers |
 | `thresholds` | Ring / Waybar colour levels |
-| `disabled` | Provider ids to skip: `anthropic`, `anthropic-<name>`, `openai`, `zai`, `xai`, `kimi`, `minimax` |
+| `disabled` | Provider ids to skip: `anthropic`, `anthropic-<name>`, `openai`, `zai`, `xai`, `antigravity`, `kimi`, `minimax` |
 | `notify.thresholds` | Alert once when a window climbs past each level |
 | `notify.exhausted` | Alert at 100% and again when the window resets |
 | `notify.pace` | Predictive alert when a window falls into pace deficit |

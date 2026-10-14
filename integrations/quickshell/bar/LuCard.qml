@@ -49,7 +49,7 @@ Rectangle {
 
     // extra Claude accounts keep their own name ("Claude OSU") so the two cards differ
     readonly property string title: provider.id !== skin.baseId(provider.id) ? provider.name : ({
-        anthropic: "Claude", openai: "OpenAI", zai: "GLM", xai: "Grok", kimi: "Kimi", minimax: "MiniMax"
+        anthropic: "Claude", openai: "OpenAI", zai: "GLM", xai: "Grok", kimi: "Kimi", minimax: "MiniMax", antigravity: "Antigravity"
     })[provider.id] || provider.name
 
     // "GLM Coding Max" on the GLM card reads twice; drop the brand prefix
