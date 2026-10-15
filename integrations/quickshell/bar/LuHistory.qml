@@ -94,7 +94,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
-        Tile { value: hist.tokenSeries ? hist.skin.tokens(hist.sumLast(1, true)) : "…"; caption: "Yesterday" }
+        Tile { value: hist.tokenSeries ? hist.skin.tokens(hist.sumLast(1, false)) : "…"; caption: "Today" }
         Tile { value: hist.tokenSeries ? hist.skin.tokens(hist.sumLast(7, false)) : "…"; caption: "Last 7 days" }
         Tile { value: hist.tokenSeries ? hist.skin.tokens(hist.sumLast(30, false)) : "…"; caption: "Last 30 days" }
     }
