@@ -1,0 +1,41 @@
+README.md
+  s_dcfd869ac9977a::t_bc7898e4b487f1 56
+integrations/quickshell/bar/LuCard.qml
+  s_dcfd869ac9977a::t_91a5c81f54c72d 15-16,156,213,215,237-243
+src/collect.test.ts
+  s_dcfd869ac9977a::t_6333368875dab1 44-51
+src/collect.ts
+  s_dcfd869ac9977a::t_ccb4091ee728cb 4,46,81
+src/credentials.test.ts
+  s_dcfd869ac9977a::t_5d1eb5b2f48b02 14,95,160,192,329-349,352,398,419,425,432-452,454-456,458
+src/credentials.ts
+  s_dcfd869ac9977a::t_ae1e85c422b7a1 1-2,25,145-147,443-455,485,524-525
+src/doctor.ts
+  s_dcfd869ac9977a::t_04c3d5e341adbe 30,38,57
+src/oauth-refresh.ts
+  s_dcfd869ac9977a::t_1b696812d369ff 235-236,257-258,264,267-270,272,361,472,474-475
+src/procs.ts
+  s_dcfd869ac9977a::t_54e1c8db22449d 1,7,9,11-13,18,23,29,34-35,38-40
+src/providers/xai.test.ts
+  s_dcfd869ac9977a::t_217f27b755b9c7 115
+src/test-setup.ts
+  s_dcfd869ac9977a::t_e66d34957e526e 22
+src/types.ts
+  s_dcfd869ac9977a::t_1d0ac3f2464199 62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4de47166bccc6779c073673b63963b12b1a49ba7",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
