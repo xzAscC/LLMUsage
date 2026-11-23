@@ -1,0 +1,25 @@
+src/credentials.test.ts
+  s_dcfd869ac9977a::t_cdfc3204ef8dec 12,154-190,199,230,274,286,299,311,338
+src/credentials.ts
+  s_dcfd869ac9977a::t_618a94928eea42 2,25,67,147-167,177,477,508
+src/doctor.ts
+  s_dcfd869ac9977a::t_3d871fb348fdef 30
+src/procs.ts
+  s_dcfd869ac9977a::t_385d68ff362aa5 1,7-8,10-14,16-19,24,28,30,36,40-49,51-56,59-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08b9360bb688bcfeba492f57ce1c4213724f073f",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
