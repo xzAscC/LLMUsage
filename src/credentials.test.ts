@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OAuthCredential } from "./auth.ts";
 import {
   authFileSource,
+  anthropicSources,
   callWithOAuth,
+  claudeCodeLockPaths,
+  claudeCodeSource,
   codexSource,
   CredentialError,
   loadStores,
+  openaiSources,
   zaiKeys,
 } from "./credentials.ts";
 import { setRunningProcesses } from "./procs.ts";
@@ -120,6 +124,204 @@ describe("stores", () => {
     } finally {
       delete process.env.ZAI_API_KEY;
       rmSync(join(piDir, "auth.json"));
+    }
+  });
+});
+
+// --- Claude Code: refresh while it runs, as one more Claude Code session ---
+
+function claudeDir(oauth: Record<string, unknown>) {
+  const dir = join(tmp(), ".claude");
+  mkdirSync(dir);
+  const path = join(dir, ".credentials.json");
+  writeFileSync(path, JSON.stringify({ claudeAiOauth: oauth, mcpOAuth: { keep: true } }));
+  return { dir, path, read: () => JSON.parse(readFileSync(path, "utf8")) };
+}
+
+const ccExpired = (access: string) => ({
+  accessToken: access,
+  refreshToken: `${access}-r`,
+  expiresAt: Date.now() - 1000,
+  refreshTokenExpiresAt: Date.now() + 5 * 86400_000,
+  scopes: ["user:inference", "user:profile", "user:sessions:claude_code"],
+  subscriptionType: "pro",
+  accountUuid: "acct",
+});
+
+describe("Claude Code credentials", () => {
+  test("lock paths are Claude Code's own: <dir>/.oauth_refresh.lock, then <dir>.lock", () => {
+    const { dir, path } = claudeDir(ccExpired("A"));
+    expect(claudeCodeLockPaths(path)).toEqual([join(dir, ".oauth_refresh.lock"), `${dir}.lock`]);
+  });
+
+  test("refreshes while claude runs, keeps every other field, releases both locks", async () => {
+    const { dir, path, read } = claudeDir(ccExpired("A"));
+    setRunningProcesses(["claude"]);
+    let seen: OAuthCredential | null = null;
+    const refresher = async (c: OAuthCredential) => {
+      seen = c;
+      // both locks are held while we talk to the token endpoint
+      expect(existsSync(join(dir, ".oauth_refresh.lock"))).toBe(true);
+      expect(existsSync(`${dir}.lock`)).toBe(true);
+      return { ...fresh("A2"), scopes: c.scopes, refreshExpires: 1_900_000_000_000 };
+    };
+    const { result } = await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access);
+    expect(result).toBe("A2");
+    expect(seen!.scopes).toEqual(["user:inference", "user:profile", "user:sessions:claude_code"]);
+    const saved = read();
+    expect(saved.claudeAiOauth).toMatchObject({
+      accessToken: "A2",
+      refreshToken: "A2-r",
+      refreshTokenExpiresAt: 1_900_000_000_000,
+      scopes: ["user:inference", "user:profile", "user:sessions:claude_code"],
+      subscriptionType: "pro",
+      accountUuid: "acct",
+    });
+    expect(saved.mcpOAuth).toEqual({ keep: true });
+    expect(existsSync(join(dir, ".oauth_refresh.lock"))).toBe(false);
+    expect(existsSync(`${dir}.lock`)).toBe(false);
+  });
+
+  for (const which of ["new", "legacy"] as const) {
+    test(`waits on Claude Code's ${which} lock and adopts the token it wrote`, async () => {
+      const { dir, path } = claudeDir(ccExpired("A"));
+      const lock = which === "new" ? join(dir, ".oauth_refresh.lock") : `${dir}.lock`;
+      mkdirSync(lock); // a Claude Code session is refreshing right now
+      setRunningProcesses(["claude"]);
+      let refreshed = false;
+      const pending = callWithOAuth(
+        [claudeCodeSource(path)!],
+        () => async () => {
+          refreshed = true;
+          return fresh("OURS");
+        },
+        async (c) => c.access,
+      );
+      await new Promise((r) => setTimeout(r, 150));
+      writeFileSync(path, JSON.stringify({ claudeAiOauth: { ...ccExpired("CC"), expiresAt: Date.now() + 3600_000 } }));
+      rmSync(lock, { recursive: true });
+      const { result } = await pending;
+      expect(result).toBe("CC");
+      expect(refreshed).toBe(false);
+    });
+  }
+
+  test("a login past its end is not refreshed; the card says to sign in again", async () => {
+    const { path } = claudeDir({ ...ccExpired("A"), refreshTokenExpiresAt: Date.now() - 1000 });
+    let refreshed = false;
+    const err = await callWithOAuth(
+      [claudeCodeSource(path)!],
+      () => async () => {
+        refreshed = true;
+        return fresh("A2");
+      },
+      async (c) => c.access,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(CredentialError);
+    expect(String(err.message)).toMatch(/login expired — run \/login/);
+    expect(refreshed).toBe(false);
+  });
+
+  test("an unexpired access token still works after the login's end", async () => {
+    const { path } = claudeDir({ ...ccExpired("A"), expiresAt: Date.now() + 3600_000, refreshTokenExpiresAt: Date.now() - 1000 });
+    const { result } = await callWithOAuth([claudeCodeSource(path)!], () => null, async (c) => c.access);
+    expect(result).toBe("A");
+  });
+
+  test("never sits on Claude Code's first lock while its second is busy", async () => {
+    const { dir, path } = claudeDir(ccExpired("A"));
+    mkdirSync(`${dir}.lock`); // a legacy holder
+    setRunningProcesses(["claude"]);
+    const pending = callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise((r) => setTimeout(r, 30));
+      expect(existsSync(join(dir, ".oauth_refresh.lock"))).toBe(false);
+    }
+    rmSync(`${dir}.lock`, { recursive: true });
+    expect((await pending).result).toBe("A2");
+  });
+
+  test("a /login during our refresh wins over the tokens we got", async () => {
+    const { path, read } = claudeDir(ccExpired("A"));
+    setRunningProcesses(["claude"]);
+    const refresher = async () => {
+      // the user signs in to another account while the server answers us
+      writeFileSync(path, JSON.stringify({ claudeAiOauth: { ...ccExpired("B"), expiresAt: Date.now() + 3600_000, subscriptionType: "max" } }));
+      return fresh("A2");
+    };
+    const { result } = await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access);
+    expect(result).toBe("B");
+    expect(read().claudeAiOauth).toMatchObject({ accessToken: "B", subscriptionType: "max" });
+  });
+
+  test("a 401 on an unexpired token does not rotate the login of a running session", async () => {
+    const { path, read } = claudeDir({ ...ccExpired("A"), expiresAt: Date.now() + 3600_000 });
+    setRunningProcesses(["claude"]);
+    let refreshed = false;
+    const err = await callWithOAuth(
+      [claudeCodeSource(path)!],
+      () => async () => {
+        refreshed = true;
+        return fresh("A2");
+      },
+      async () => {
+        throw new Error("HTTP 401: scope");
+      },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(CredentialError);
+    expect(refreshed).toBe(false);
+    expect(read().claudeAiOauth.accessToken).toBe("A");
+  });
+
+  test("a killed collector leaves no Claude Code lock behind", async () => {
+    const root = tmp();
+    const locks = [join(root, ".oauth_refresh.lock"), `${root}.lock`];
+    dirs.push(`${root}.lock`);
+    const script = `import { withFileLocks } from ${JSON.stringify(join(import.meta.dir, "oauth-refresh.ts"))};
+await withFileLocks(${JSON.stringify(locks)}, "test", () => new Promise(() => setInterval(() => {}, 1000)));`;
+    const child = Bun.spawn(["bun", "-e", script], { stdout: "ignore", stderr: "ignore" });
+    for (let i = 0; i < 100 && !locks.every((l) => existsSync(l)); i += 1) await new Promise((r) => setTimeout(r, 30));
+    expect(locks.every((l) => existsSync(l))).toBe(true);
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(143);
+    expect(locks.some((l) => existsSync(l))).toBe(false);
+  });
+
+  test("Codex still waits while codex runs", async () => {
+    const path = join(tmp(), "auth.json");
+    writeFileSync(path, JSON.stringify({ tokens: { access_token: jwt(Math.floor(Date.now() / 1000) - 10), refresh_token: "R" } }));
+    setRunningProcesses(["codex"]);
+    let refreshed = false;
+    await callWithOAuth(
+      [codexSource(path)!],
+      () => async () => {
+        refreshed = true;
+        return fresh("N");
+      },
+      async (c) => c.access,
+    );
+    expect(refreshed).toBe(false);
+  });
+});
+
+describe("one card = one login", () => {
+  test("Claude Code and Codex logins hide old copies in pi and OpenCode", () => {
+    const claude = process.env.CLAUDE_CREDENTIALS_PATH!;
+    const codex = join(process.env.CODEX_HOME!, "auth.json");
+    const pi = join(process.env.PI_CODING_AGENT_DIR!, "auth.json");
+    for (const f of [claude, codex, pi]) mkdirSync(join(f, ".."), { recursive: true });
+    writeFileSync(claude, JSON.stringify({ claudeAiOauth: ccExpired("CC") }));
+    writeFileSync(codex, JSON.stringify({ tokens: { access_token: jwt(2e9), refresh_token: "R" } }));
+    writeFileSync(pi, JSON.stringify({ anthropic: fresh("PI_A"), "openai-codex": fresh("PI_O") }));
+    try {
+      const stores = loadStores({ anthropic: fresh("OC_A"), openai: fresh("OC_O") });
+      expect(anthropicSources(stores).map((s) => s.label)).toEqual(["Claude Code"]);
+      expect(openaiSources(stores).map((s) => s.label)).toEqual(["Codex"]);
+      rmSync(codex);
+      // without a Codex login the next store is used, still only one
+      expect(openaiSources(loadStores({})).map((s) => s.label)).toEqual(["pi"]);
+    } finally {
+      for (const f of [claude, codex, pi]) rmSync(f, { force: true });
     }
   });
 });

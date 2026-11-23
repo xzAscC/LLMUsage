@@ -203,40 +203,85 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Lock directories this process holds, removed on SIGTERM/SIGINT/SIGHUP too. */
+const heldLocks = new Set<string>();
+let cleanupInstalled = false;
+
+function installLockCleanup(): void {
+  if (cleanupInstalled) return;
+  cleanupInstalled = true;
+  // A killed collector must not leave Claude Code's refresh locks behind:
+  // its sessions could not refresh until the lock goes stale (60 s).
+  const codes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
+  for (const [sig, code] of Object.entries(codes)) {
+    process.on(sig, () => {
+      for (const p of heldLocks) rmSync(p, { recursive: true, force: true });
+      process.exit(code);
+    });
+  }
+}
+
+/** mkdir the lock once; break it only when nobody has touched it for REFRESH_LOCK_STALE_MS. */
+function tryLock(lockPath: string): boolean {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(lockPath, { mode: 0o700 });
+      heldLocks.add(lockPath);
+      return true;
+    } catch (err) {
+      if (errorCode(err) !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs <= REFRESH_LOCK_STALE_MS) return false;
+        rmSync(lockPath, { recursive: true, force: true });
+      } catch (statError) {
+        if (errorCode(statError) !== "ENOENT") throw statError;
+      }
+    }
+  }
+  return false;
+}
+
+function unlock(lockPath: string): void {
+  rmSync(lockPath, { recursive: true, force: true });
+  heldLocks.delete(lockPath);
+}
+
+/**
+ * Take every lock in order (the order Claude Code uses, so nobody deadlocks)
+ * or none: when a later one is busy, release the earlier ones and retry, as
+ * Claude Code does, so we never sit on its first lock while waiting.
+ */
+export async function withFileLocks<T>(
+  lockPaths: string[],
+  label: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  installLockCleanup();
+  const deadline = Date.now() + REFRESH_LOCK_TIMEOUT_MS;
+  while (true) {
+    const held: string[] = [];
+    try {
+      for (const p of lockPaths) {
+        if (!tryLock(p)) break;
+        held.push(p);
+      }
+      if (held.length === lockPaths.length) return await action();
+    } finally {
+      for (const p of held.reverse()) unlock(p);
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${label} OAuth refresh lock`);
+    }
+    await delay(REFRESH_LOCK_POLL_MS);
+  }
+}
+
 export async function withFileLock<T>(
   lockPath: string,
   label: string,
   action: () => Promise<T>,
 ): Promise<T> {
-  const deadline = Date.now() + REFRESH_LOCK_TIMEOUT_MS;
-
-  while (true) {
-    try {
-      mkdirSync(lockPath, { mode: 0o700 });
-      break;
-    } catch (err) {
-      if (errorCode(err) !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > REFRESH_LOCK_STALE_MS) {
-          rmSync(lockPath, { recursive: true, force: true });
-          continue;
-        }
-      } catch (statError) {
-        if (errorCode(statError) === "ENOENT") continue;
-        throw statError;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for ${label} OAuth refresh lock`);
-      }
-      await delay(REFRESH_LOCK_POLL_MS);
-    }
-  }
-
-  try {
-    return await action();
-  } finally {
-    rmSync(lockPath, { recursive: true, force: true });
-  }
+  return withFileLocks([lockPath], label, action);
 }
 
 export function lockPathFor(credPath: string, key: string): string {
@@ -264,13 +309,15 @@ export async function refreshFileCredential(opts: {
   requested: OAuthCredential;
   read: () => OAuthCredential | null;
   write: (next: OAuthCredential) => void;
-  lockPath: string;
+  /** one lock, or several taken in order (Claude Code uses two) */
+  lockPath: string | string[];
   label: string;
   refresh: OAuthRefresher;
   force?: boolean;
 }): Promise<OAuthCredential | null> {
   const { requested, read, write, refresh, force = false } = opts;
-  return withFileLock(opts.lockPath, opts.label, async () => {
+  const lockPaths = Array.isArray(opts.lockPath) ? opts.lockPath : [opts.lockPath];
+  return withFileLocks(lockPaths, opts.label, async () => {
     const latest = read();
     if (!latest) return null;
     if (credentialsChanged(requested, latest)) return latest;
@@ -289,6 +336,10 @@ export async function refreshFileCredential(opts: {
       }
       throw err;
     }
+    // A /login or /logout while we waited on the server wins: never write the
+    // old login's tokens over it.
+    const now = read();
+    if (!now || credentialsChanged(latest, now)) return now;
     write(next);
     return next;
   });

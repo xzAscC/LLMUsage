@@ -78,6 +78,8 @@ export function withStaleFallback(
     stale: true,
     asOf,
     error: current.error,
+    // only from the current login: an older snapshot may predate a new /login
+    loginExpiresAt: current.loginExpiresAt,
     windows,
     fetchedAt: current.fetchedAt,
   });

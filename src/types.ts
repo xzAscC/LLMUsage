@@ -59,6 +59,8 @@ export interface ProviderStatus {
   /** last fetch failed; windows are the last good reading from `asOf` */
   stale?: boolean;
   asOf?: string;
+  /** ISO time the login ends and must be renewed by signing in again (Claude) */
+  loginExpiresAt?: string;
   /** representative used % for compact bar (worst window) */
   usedPercent?: number;
   severity: Severity;

@@ -11,6 +11,18 @@ function ago(iso?: string): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+const DAY_MS = 86_400_000;
+
+/** Same rule and wording as Claude Code's own banner: warn in the last 3 days. */
+export function loginNotice(p: ProviderStatus, now = Date.now()): string | null {
+  if (!p.loginExpiresAt) return null;
+  const left = Date.parse(p.loginExpiresAt) - now;
+  if (!Number.isFinite(left) || left > 3 * DAY_MS) return null;
+  if (left <= 0) return "Login expired · run /login";
+  const days = Math.ceil(left / DAY_MS);
+  return `Login expires in ${days} ${days === 1 ? "day" : "days"} · run /login`;
+}
+
 export function formatHuman(snapshot: UsageSnapshot): string {
   const lines: string[] = [];
   lines.push(`LLM Usage  ·  ${snapshot.fetchedAt}`);
@@ -18,9 +30,11 @@ export function formatHuman(snapshot: UsageSnapshot): string {
 
   for (const p of snapshot.providers) {
     const head = p.plan ? `${p.name} (${p.plan})` : p.name;
+    const notice = loginNotice(p);
     if (!p.ok) {
       lines.push(`✗ ${head}`);
       lines.push(`  error: ${p.error || "unknown"}`);
+      if (notice) lines.push(`  ${notice}`);
       lines.push("");
       continue;
     }
@@ -32,6 +46,7 @@ export function formatHuman(snapshot: UsageSnapshot): string {
     if (p.stale) {
       lines.push(`  stale: as of ${ago(p.asOf)} — ${p.error || "refresh failed"}`);
     }
+    if (notice) lines.push(`  ${notice}`);
     const pad = Math.max(12, ...p.windows.map((w) => w.label.length));
     for (const w of p.windows) {
       if (w.usedPercent != null) {

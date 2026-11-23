@@ -44,7 +44,18 @@ Rectangle {
                 out.push({ icon: "toll", text: w.label.trim() + " " + w.note.replace(/^balance /, "") })
             }
         }
+        const login = loginChip()
+        if (login) out.push(login)
         return out
+    }
+
+    // the login itself ends on a fixed date (Claude); warn in the last 3 days, like Claude Code
+    function loginChip() {
+        const left = Date.parse(provider.loginExpiresAt || "") - Date.now()
+        if (!(left <= 3 * 86400000)) return null
+        if (left <= 0) return { icon: "login", text: "Login expired · run /login", tone: "critical" }
+        const d = Math.ceil(left / 86400000)
+        return { icon: "login", text: "Login expires in " + d + (d === 1 ? " day" : " days") + " · run /login", tone: "warming" }
     }
 
     // extra Claude accounts keep their own name ("Claude OSU") so the two cards differ
@@ -176,11 +187,11 @@ Rectangle {
                         MaterialSymbol {
                             text: modelData.icon
                             iconSize: 12
-                            color: card.skin.clay
+                            color: modelData.tone ? card.skin[modelData.tone] : card.skin.clay
                         }
                         StyledText {
                             text: modelData.text
-                            color: card.skin.ink2
+                            color: modelData.tone ? card.skin[modelData.tone] : card.skin.ink2
                             font.pixelSize: 11
                         }
                     }

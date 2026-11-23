@@ -8,6 +8,7 @@ import {
   antigravitySources,
   kimiTokens,
   loadStores,
+  loginEnded,
   minimaxKeys,
   openaiSources,
   ownerRunning,
@@ -26,16 +27,21 @@ const BAD = "✗";
 
 function oauthLine(s: OAuthSource): string {
   const running = ownerRunning(s.owner);
+  const waits = running && !s.refreshWhileRunning;
   let state: string;
-  if (s.cred.expires == null) state = "no expiry recorded";
+  if (loginEnded(s.cred)) state = "login expired — run /login";
+  else if (s.cred.expires == null) state = "no expiry recorded";
   else if (isOAuthExpired(s.cred)) {
-    state = running
+    state = waits
       ? `expired — ${s.label} is running, it refreshes on next use`
       : s.cred.refresh
-        ? `expired — will refresh (${s.label} idle)`
+        ? `expired — will refresh${running ? ` (under ${s.label}'s lock)` : ` (${s.label} idle)`}`
         : "expired, no refresh token — log in again";
   } else state = `valid ${formatDuration((s.cred.expires - Date.now()) / 1000)}`;
-  const mark = isOAuthExpired(s.cred) && (running || !s.cred.refresh) ? WARN : OK;
+  if (s.cred.refreshExpires && !loginEnded(s.cred)) {
+    state += `; login ends ${new Date(s.cred.refreshExpires).toLocaleString()}`;
+  }
+  const mark = loginEnded(s.cred) || (isOAuthExpired(s.cred) && (waits || !s.cred.refresh)) ? WARN : OK;
   return `    ${mark} ${s.label.padEnd(12)} ${state}${running ? "  [running]" : ""}`;
 }
 
@@ -48,7 +54,7 @@ export async function runDoctor(): Promise<string> {
   const stores = loadStores();
   const cfg = loadConfig();
 
-  out.push("Credentials (first usable wins; refresh only while the owning agent is idle)");
+  out.push("Credentials (first store with a login is used; refresh only while its agent is idle, or under Claude Code's own lock)");
   const groups: [string, string[]][] = [
     ["Claude", anthropicSources(stores).map(oauthLine)],
     ...cfg.claude.accounts.map((a): [string, string[]] => [`Claude ${a.name}`, claudeAccountSources(a).map(oauthLine)]),

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type AuthFile,
@@ -60,6 +60,11 @@ export interface OAuthSource {
   plan?: string;
   /** OIDC client id stored next to the token (Grok CLI). */
   clientId?: string;
+  /**
+   * Safe to refresh while the owner runs: we take the owner's own refresh
+   * lock, and the owner re-reads the file under that lock (Claude Code).
+   */
+  refreshWhileRunning?: boolean;
   /** Refresh under a lock and write the rotated token back to the owner's file. */
   refresh(refresher: OAuthRefresher, force: boolean): Promise<OAuthCredential | null>;
 }
@@ -101,6 +106,8 @@ function readClaudeCode(path: string): { cred: OAuthCredential; plan?: string } 
       access: o.accessToken,
       refresh: o.refreshToken || undefined,
       expires: typeof o.expiresAt === "number" ? o.expiresAt : undefined,
+      scopes: Array.isArray(o.scopes) ? o.scopes : undefined,
+      refreshExpires: typeof o.refreshTokenExpiresAt === "number" ? o.refreshTokenExpiresAt : undefined,
     },
     plan: o.subscriptionType || undefined,
   };
@@ -114,8 +121,27 @@ function writeClaudeCode(path: string, next: OAuthCredential): void {
     accessToken: next.access,
     refreshToken: next.refresh || prev.refreshToken || "",
     expiresAt: next.expires,
+    ...(next.scopes?.length && { scopes: next.scopes }),
+    ...(next.refreshExpires && { refreshTokenExpiresAt: next.refreshExpires }),
   };
   atomicWriteJson(path, data);
+}
+
+/**
+ * Claude Code's own refresh locks (2.1.x): `<config dir>/.oauth_refresh.lock`,
+ * then the legacy `<config dir>.lock`, both mkdir-style. Every Claude Code
+ * session takes them before refreshing and re-reads the credentials file
+ * inside, so holding them makes us one more session, not a rival.
+ */
+export function claudeCodeLockPaths(credPath: string): string[] {
+  const dir = dirname(credPath);
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    // directory missing: nothing to refresh anyway
+  }
+  return [join(dir, ".oauth_refresh.lock"), `${real}.lock`];
 }
 
 export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | null {
@@ -127,12 +153,13 @@ export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | 
     path,
     cred: found.cred,
     plan: found.plan,
+    refreshWhileRunning: true,
     refresh: (refresher, force) =>
       refreshFileCredential({
         requested: found.cred,
         read: () => readClaudeCode(path)?.cred ?? null,
         write: (c) => writeClaudeCode(path, c),
-        lockPath: lockPathFor(path, "claude"),
+        lockPath: claudeCodeLockPaths(path),
         label: "Claude Code",
         refresh: refresher,
         force,
@@ -295,8 +322,17 @@ function compact<T>(xs: (T | null)[]): T[] {
   return xs.filter((x): x is T => x != null);
 }
 
+/**
+ * One card = one login: the first store that holds a login is used and the
+ * rest are ignored, so a failing login never turns into another account's
+ * numbers (e.g. an old personal ChatGPT login left in pi or OpenCode).
+ */
+function firstLogin(xs: (OAuthSource | null)[]): OAuthSource[] {
+  return compact(xs).slice(0, 1);
+}
+
 export function anthropicSources(s: Stores): OAuthSource[] {
-  return compact([
+  return firstLogin([
     claudeCodeSource(),
     authFileSource("pi", s.piPath, s.pi, ["anthropic"]),
     authFileSource("opencode", s.opencodePath, s.opencode, ["anthropic", "claude"]),
@@ -304,7 +340,7 @@ export function anthropicSources(s: Stores): OAuthSource[] {
 }
 
 export function openaiSources(s: Stores): OAuthSource[] {
-  return compact([
+  return firstLogin([
     codexSource(),
     authFileSource("pi", s.piPath, s.pi, ["openai-codex", "openai"]),
     authFileSource("opencode", s.opencodePath, s.opencode, ["openai", "codex", "chatgpt"]),
@@ -312,7 +348,7 @@ export function openaiSources(s: Stores): OAuthSource[] {
 }
 
 export function xaiSources(s: Stores): OAuthSource[] {
-  return compact([
+  return firstLogin([
     grokCliSource(),
     authFileSource("pi", s.piPath, s.pi, ["xai", "grok"]),
     authFileSource("opencode", s.opencodePath, s.opencode, ["xai", "grok"]),
@@ -321,7 +357,7 @@ export function xaiSources(s: Stores): OAuthSource[] {
 
 /** Google Antigravity via the pi-antigravity extension (`/login antigravity`). */
 export function antigravitySources(s: Stores): OAuthSource[] {
-  return compact([authFileSource("pi", s.piPath, s.pi, ["antigravity", "google-antigravity"])]);
+  return firstLogin([authFileSource("pi", s.piPath, s.pi, ["antigravity", "google-antigravity"])]);
 }
 
 function envKeys(names: string[]): ApiKeySource[] {
@@ -402,8 +438,19 @@ export async function callWithOAuth<T>(
   const problems: string[] = [];
 
   for (const source of ordered) {
+    // A login past its end cannot be refreshed; its access token may still work a while.
+    const ended = loginEnded(source.cred);
+    if (ended && isOAuthExpired(source.cred)) {
+      problems.push(`${source.label}: login expired — run /login`);
+      continue;
+    }
     const refresher = refresherFor(source);
-    const canRefresh = !!(refresher && source.cred.refresh && !ownerRunning(source.owner));
+    const canRefresh = !!(
+      !ended &&
+      refresher &&
+      source.cred.refresh &&
+      (source.refreshWhileRunning || !ownerRunning(source.owner))
+    );
     let cred = source.cred;
 
     if (isOAuthExpired(cred) && canRefresh) {
@@ -421,8 +468,10 @@ export async function callWithOAuth<T>(
       if (!isAuthError(err)) throw err;
       if (canRefresh) {
         try {
-          const next = await source.refresh(refresher!, true);
-          if (next) return { result: await call(next, source), source, cred: next };
+          // While the owner runs, only adopt what it wrote: forcing a new token
+          // on any 401 would pull the login from under the running session.
+          const next = await source.refresh(refresher!, !ownerRunning(source.owner));
+          if (next && next.access !== cred.access) return { result: await call(next, source), source, cred: next };
         } catch (retryErr) {
           if (!isAuthError(retryErr)) {
             problems.push(refreshProblem(source, retryErr));
@@ -431,13 +480,18 @@ export async function callWithOAuth<T>(
         }
       }
       problems.push(
-        ownerRunning(source.owner)
+        ownerRunning(source.owner) && !source.refreshWhileRunning
           ? `${source.label}: token rejected (${source.label} is running and will refresh it on next use)`
           : `${source.label}: token rejected — log in again`,
       );
     }
   }
   throw new CredentialError(problems.join("; "));
+}
+
+/** The login itself is over (Claude's refresh token expiry): only signing in again helps. */
+export function loginEnded(cred: OAuthCredential, now = Date.now()): boolean {
+  return cred.refreshExpires != null && cred.refreshExpires <= now;
 }
 
 function refreshProblem(source: OAuthSource, err: unknown): string {

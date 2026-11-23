@@ -30,6 +30,7 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 - **Kimi** and **MiniMax** coding plans — optional, shown only when a token/key is configured
 - **Pace vs even burn** on every rolling window: `14% in reserve`, `on pace · lands ~98%`, `8% in deficit · runs out ~21:40`
 - **Stale, not blank** — when a refresh fails, the last good reading stays (dimmed, “as of 2h ago”) for up to 3 days
+- **Login end** — a Claude login ends on a fixed date that refreshing does not move; the card warns in the last 3 days (“Login expires in 2 days · run /login”), as Claude Code does
 - **History** — daily peak + mean per window, `llm-usage history` with sparklines / CSV
 - **Local token totals** — per-day tokens from Claude Code, Codex and pi session logs (`llm-usage tokens`)
 - **Alerts** — fire once per threshold crossing (75/90/95), on exhaustion/reset, optionally on pace deficit
@@ -38,7 +39,7 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 
 ### Where credentials come from
 
-First usable source wins; a token rejected with 401 falls through to the next one.
+One card = one login: the first store that holds a login is used and the others are ignored, so a failing login never shows another account's numbers (an old ChatGPT login left in pi, say).
 
 | Provider | Sources, in order |
 |----------|-------------------|
@@ -50,7 +51,9 @@ First usable source wins; a token rejected with 401 falls through to the next on
 | Kimi | `$KIMI_TOKEN` → `~/.config/llm-usage/kimi-token` (kimi.com `localStorage.access_token`, ~30 days) |
 | MiniMax | `$MINIMAX_API_KEY` → `~/.minimax-api-key` → pi / OpenCode `minimax` |
 
-**Refresh ownership:** an expired OAuth token is refreshed — and the rotated token written back to its own file under a lock — **only while the agent that owns it is not running** (`claude`, `codex`, `pi`, `opencode`, `grok`, detected via `/proc`). While the agent runs, it stays the sole rotator and LLMUsage moves on to the next source, so it never races the agent for a single-use refresh token.
+**Refresh ownership:** an expired OAuth token is refreshed — and the rotated token written back to its own file under a lock — **only while the agent that owns it is not running** (`claude`, `codex`, `pi`, `opencode`, `grok`, detected via `/proc`). While the agent runs, it stays the sole rotator, so LLMUsage never races it for a single-use refresh token.
+
+**Claude Code is the exception:** its sessions already share one credentials file. Before refreshing, each takes `<config dir>/.oauth_refresh.lock` and then `<config dir>.lock` (mkdir locks, Claude Code 2.1.x) and re-reads the file inside them. LLMUsage takes the same two locks in the same order, so it refreshes like one more session even while `claude` runs, and the Claude card never goes stale just because a session sits idle. It asks for the login's existing scopes and keeps `refreshTokenExpiresAt` up to date.
 
 ---
 

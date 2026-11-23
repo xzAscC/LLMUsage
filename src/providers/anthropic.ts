@@ -17,6 +17,11 @@ const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const BETA = "oauth-2025-04-20";
+/**
+ * Claude Code's own budget. Never cut a refresh short: once the server has
+ * rotated the token, aborting would drop the only copy of the new one.
+ */
+const REFRESH_TIMEOUT_MS = 30_000;
 const SESSION_SECONDS = 5 * 3600;
 const WEEK_SECONDS = 7 * 86400;
 
@@ -54,6 +59,8 @@ export async function refreshClaudeToken(
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
+    refresh_token_expires_in?: number;
+    scope?: string;
   }>(REFRESH_URL, {
     method: "POST",
     headers: {
@@ -61,20 +68,29 @@ export async function refreshClaudeToken(
       Accept: "application/json",
       "User-Agent": "claude-cli/2.1.177",
     },
+    // Ask for the scopes the login already has, as Claude Code does, so a
+    // refresh by us never leaves Claude Code with a narrower token.
     body: JSON.stringify({
       grant_type: "refresh_token",
       refresh_token: oauth.refresh,
       client_id: CLIENT_ID,
+      ...(oauth.scopes?.length && { scope: oauth.scopes.join(" ") }),
     }),
-  });
+  }, REFRESH_TIMEOUT_MS);
   if (!resp.access_token) {
     throw new Error("Claude OAuth refresh returned no access_token");
   }
+  const scopes = resp.scope?.split(" ").filter(Boolean);
   return {
     type: "oauth",
     access: resp.access_token,
     refresh: resp.refresh_token || oauth.refresh,
     expires: Date.now() + (resp.expires_in ?? 28800) * 1000,
+    scopes: scopes?.length ? scopes : oauth.scopes,
+    refreshExpires:
+      typeof resp.refresh_token_expires_in === "number"
+        ? Date.now() + resp.refresh_token_expires_in * 1000
+        : oauth.refreshExpires,
   };
 }
 
@@ -219,16 +235,22 @@ export async function fetchAnthropic(
   account?: ClaudeAccount,
 ): Promise<ProviderStatus> {
   const now = new Date().toISOString();
-  const base = account
-    ? { id: claudeAccountId(account), name: `Claude ${account.name}`, fetchedAt: now }
-    : { id: "anthropic" as const, name: "Claude", fetchedAt: now };
+  const loginEnds = sources[0]?.cred.refreshExpires;
+  const base = {
+    ...(account
+      ? { id: claudeAccountId(account), name: `Claude ${account.name}` }
+      : { id: "anthropic" as const, name: "Claude" }),
+    fetchedAt: now,
+    ...(loginEnds && { loginExpiresAt: new Date(loginEnds).toISOString() }),
+  };
   try {
-    const { result: body, source } = await callWithOAuth(
+    const { result: body, source, cred } = await callWithOAuth(
       sources,
       () => refreshClaudeToken,
       (cred) => fetchUsage(cred.access),
     );
     const windows = mapUsage(body);
+    if (cred.refreshExpires) base.loginExpiresAt = new Date(cred.refreshExpires).toISOString();
     if (windows.length === 0) {
       return finalizeProvider({
         ...base,
