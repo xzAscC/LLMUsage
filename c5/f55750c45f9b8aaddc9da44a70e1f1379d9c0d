@@ -1,0 +1,27 @@
+README.md
+  s_dcfd869ac9977a::t_34e78ffddbaf31 29,56-58
+src/credentials.ts
+  s_dcfd869ac9977a::t_28a3cacbdb27a2 68-73,391-392,495-502
+src/oauth-refresh.ts
+  s_dcfd869ac9977a::t_7e9ded86cc9dcf 123-128,130-132,134-142
+src/providers/antigravity.test.ts
+  s_dcfd869ac9977a::t_1463b73a7e5ebd 7-8,69-113,130-133,156,175-188
+src/providers/antigravity.ts
+  s_dcfd869ac9977a::t_eaf0ada28abd24 52-56,59,74,78,146,150-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5f55750c45f9b8aaddc9da44a70e1f1379d9c0d",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
