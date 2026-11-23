@@ -120,17 +120,26 @@ export async function antigravityClient(): Promise<{ id: string; secret: string 
   const secret = process.env.ANTIGRAVITY_CLIENT_SECRET;
   if (id && secret) return { id, secret };
   const path = join(piAgentDir(), "npm", "node_modules", "pi-antigravity", "src", "auth", "oauth.ts");
-  try {
-    const m = await import(path);
-    if (typeof m.CLIENT_ID === "string" && m.CLIENT_ID && typeof m.CLIENT_SECRET === "string" && m.CLIENT_SECRET) {
-      return { id: m.CLIENT_ID, secret: m.CLIENT_SECRET };
-    }
-  } catch {
-    // pi-antigravity not installed here
+  if (!existsSync(path)) {
+    throw new Error(
+      "Antigravity OAuth client not found: install pi-antigravity in pi, or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
+    );
   }
-  throw new Error(
-    "Antigravity OAuth client not found: install pi-antigravity in pi, or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
-  );
+  let m: Record<string, unknown>;
+  try {
+    m = await import(path);
+  } catch (err) {
+    throw new Error(`Antigravity OAuth client: pi-antigravity failed to load (${shortReason(err)})`);
+  }
+  if (typeof m.CLIENT_ID === "string" && m.CLIENT_ID && typeof m.CLIENT_SECRET === "string" && m.CLIENT_SECRET) {
+    return { id: m.CLIENT_ID, secret: m.CLIENT_SECRET };
+  }
+  throw new Error("Antigravity OAuth client: pi-antigravity no longer exports CLIENT_ID/CLIENT_SECRET");
+}
+
+function shortReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
 }
 
 export async function googleRefresher(

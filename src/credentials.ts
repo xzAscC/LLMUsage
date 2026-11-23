@@ -65,6 +65,12 @@ export interface OAuthSource {
    * lock, and the owner re-reads the file under that lock (Claude Code).
    */
   refreshWhileRunning?: () => boolean;
+  /**
+   * The refresh token does not rotate (Google): while the owner runs, a fresh
+   * access token can be got for our own call and thrown away, without
+   * touching the owner's file or its login.
+   */
+  refreshInMemory?: boolean;
   /** Refresh under a lock and write the rotated token back to the owner's file. */
   refresh(refresher: OAuthRefresher, force: boolean): Promise<OAuthCredential | null>;
 }
@@ -382,7 +388,8 @@ export function xaiSources(s: Stores): OAuthSource[] {
 
 /** Google Antigravity via the pi-antigravity extension (`/login antigravity`). */
 export function antigravitySources(s: Stores): OAuthSource[] {
-  return firstLogin([authFileSource("pi", s.piPath, s.pi, ["antigravity", "google-antigravity"])]);
+  const src = authFileSource("pi", s.piPath, s.pi, ["antigravity", "google-antigravity"]);
+  return firstLogin([src && { ...src, refreshInMemory: true }]);
 }
 
 function envKeys(names: string[]): ApiKeySource[] {
@@ -481,6 +488,14 @@ export async function callWithOAuth<T>(
     if (isOAuthExpired(cred) && canRefresh) {
       try {
         cred = (await source.refresh(refresher!, false)) ?? cred;
+      } catch (err) {
+        problems.push(refreshProblem(source, err));
+        continue;
+      }
+    } else if (isOAuthExpired(cred) && !ended && refresher && cred.refresh && source.refreshInMemory) {
+      // the owner runs and keeps its file; use a token of our own for this call
+      try {
+        cred = await refresher(cred);
       } catch (err) {
         problems.push(refreshProblem(source, err));
         continue;

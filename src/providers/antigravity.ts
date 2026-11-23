@@ -49,9 +49,14 @@ interface LoadCodeAssist {
   paidTier?: Tier;
 }
 
-/** POST to the first endpoint that answers; 403/404/429/5xx fall through to the next. */
+/**
+ * POST to the first endpoint that answers; 403/404/429/5xx fall through to
+ * the next. If none answers, throw the error that says most: a
+ * SUBSCRIPTION_REQUIRED from any endpoint, else the last one.
+ */
 async function post<T>(path: string, token: string, body: unknown): Promise<T> {
   let last: unknown;
+  let telling: unknown;
   for (const base of ENDPOINTS) {
     try {
       return await fetchJson<T>(`${base}${path}`, {
@@ -66,10 +71,11 @@ async function post<T>(path: string, token: string, body: unknown): Promise<T> {
       });
     } catch (err) {
       if (/HTTP 401/.test(String(err))) throw err;
+      if (/SUBSCRIPTION_REQUIRED/i.test(String(err))) telling ??= err;
       last = err;
     }
   }
-  throw last;
+  throw telling ?? last;
 }
 
 function slug(s: string): string {
@@ -137,10 +143,12 @@ function shortError(err: unknown): string {
   return shortMessage(err);
 }
 
+/** null = no Antigravity login in pi: the card is not shown, as for Kimi and MiniMax. */
 export async function fetchAntigravity(
   auth?: AuthFile,
   sources: OAuthSource[] = antigravitySources(loadStores(auth)),
-): Promise<ProviderStatus> {
+): Promise<ProviderStatus | null> {
+  if (sources.length === 0) return null;
   const base = { id: "antigravity" as const, name: "Antigravity", fetchedAt: new Date().toISOString() };
   try {
     const { result, source } = await callWithOAuth(sources, () => googleRefresher, async (cred) => {
