@@ -7,6 +7,10 @@ export interface OAuthCredential {
   refresh?: string;
   expires?: number;
   accountId?: string;
+  /** Claude Code only: granted scopes, sent back on refresh so none are dropped */
+  scopes?: string[];
+  /** Claude Code only: when the login itself ends (refresh token expiry); refreshing does not move it */
+  refreshExpires?: number;
 }
 
 export interface ApiCredential {

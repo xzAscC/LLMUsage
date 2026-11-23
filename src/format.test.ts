@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatHuman, formatWaybar } from "./format.ts";
+import { formatHuman, formatWaybar, loginNotice } from "./format.ts";
 import type { UsageSnapshot } from "./types.ts";
 
 const sample: UsageSnapshot = {
@@ -95,5 +95,17 @@ describe("formatWaybar", () => {
     expect(obj.tooltip).toContain("&lt;");
     expect(obj.tooltip).toContain("&gt;");
     expect(obj.tooltip).not.toMatch(/(?<!\\n)<(?!\\n)/);
+  });
+});
+
+describe("loginNotice", () => {
+  const now = Date.parse("2026-11-22T12:00:00Z");
+  const at = (ms: number) => ({ id: "anthropic" as const, name: "Claude", ok: true, severity: "ok" as const, windows: [], fetchedAt: "", loginExpiresAt: new Date(now + ms).toISOString() });
+  test("quiet until the last three days, like Claude Code", () => {
+    expect(loginNotice(at(4 * 86400_000), now)).toBeNull();
+    expect(loginNotice({ ...at(0), loginExpiresAt: undefined }, now)).toBeNull();
+    expect(loginNotice(at(1.2 * 86400_000), now)).toBe("Login expires in 2 days · run /login");
+    expect(loginNotice(at(3600_000), now)).toBe("Login expires in 1 day · run /login");
+    expect(loginNotice(at(-1), now)).toBe("Login expired · run /login");
   });
 });

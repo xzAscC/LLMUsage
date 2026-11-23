@@ -19,6 +19,7 @@ process.env.XDG_CONFIG_HOME = join(sandbox, "config");
 for (const k of [
   "ZAI_API_KEY", "Z_AI_API_KEY", "ZHIPUAI_API_KEY", "GLM_API_KEY",
   "MINIMAX_API_KEY", "KIMI_TOKEN", "KIMI_ACCESS_TOKEN",
+  "ANTIGRAVITY_CLIENT_ID", "ANTIGRAVITY_CLIENT_SECRET", "NOAGY_CLIENT_ID", "NOAGY_CLIENT_SECRET",
 ]) {
   delete process.env[k];
 }

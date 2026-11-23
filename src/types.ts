@@ -6,7 +6,8 @@ export type ProviderId =
   /** extra Claude account from config `claude.accounts` */
   | `anthropic-${string}`
   | "kimi"
-  | "minimax";
+  | "minimax"
+  | "antigravity";
 
 export type Severity = "ok" | "warn" | "crit" | "error" | "unknown";
 
@@ -58,6 +59,10 @@ export interface ProviderStatus {
   /** last fetch failed; windows are the last good reading from `asOf` */
   stale?: boolean;
   asOf?: string;
+  /** the token expired while its agent runs; the agent refreshes it on its next request */
+  waiting?: boolean;
+  /** ISO time the login ends and must be renewed by signing in again (Claude) */
+  loginExpiresAt?: string;
   /** representative used % for compact bar (worst window) */
   usedPercent?: number;
   severity: Severity;

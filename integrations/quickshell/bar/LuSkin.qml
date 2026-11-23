@@ -43,7 +43,7 @@ QtObject {
     }
     function letter(id) {
         id = baseId(id)
-        return ({ anthropic: "C", openai: "O", zai: "G", xai: "X", kimi: "K", minimax: "M" })[id] || "?"
+        return ({ anthropic: "C", openai: "O", zai: "G", xai: "X", kimi: "K", minimax: "M", antigravity: "A" })[id] || "?"
     }
     function accent(id) {
         id = baseId(id)

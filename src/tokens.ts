@@ -15,6 +15,17 @@ export type TokenSource = "Claude Code" | "Codex" | "pi";
 /** day → source → tokens */
 export type TokenDays = Record<string, Partial<Record<TokenSource, number>>>;
 
+/** day → "<source>\t<model>" → tokens */
+export type ModelDays = Record<string, Record<string, number>>;
+
+/** "claude-opus-5-5" → "Opus 5.5"; other ids (gpt-6-astra, glm-5.3, …) stay as they are. */
+export function modelLabel(id: unknown): string {
+  if (typeof id !== "string" || !id || id.startsWith("<")) return "unknown";
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
+  if (!m) return id;
+  return `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+}
+
 function* jsonlFiles(dir: string, sinceMs: number, match: (name: string) => boolean): Generator<string> {
   let entries: import("node:fs").Dirent[];
   try {
@@ -35,7 +46,8 @@ function* jsonlFiles(dir: string, sinceMs: number, match: (name: string) => bool
   }
 }
 
-function eachLine(path: string, needle: string, fn: (row: any) => void): void {
+function eachLine(path: string, needle: string | string[], fn: (row: any) => void): void {
+  const needles = Array.isArray(needle) ? needle : [needle];
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -43,7 +55,7 @@ function eachLine(path: string, needle: string, fn: (row: any) => void): void {
     return;
   }
   for (const line of text.split("\n")) {
-    if (!line.includes(needle)) continue;
+    if (!needles.some((n) => line.includes(n))) continue;
     try {
       fn(JSON.parse(line));
     } catch {
@@ -52,15 +64,30 @@ function eachLine(path: string, needle: string, fn: (row: any) => void): void {
   }
 }
 
-function add(days: TokenDays, ts: string | number | undefined, src: TokenSource, n: number, sinceMs: number): void {
+function add(
+  days: TokenDays,
+  ts: string | number | undefined,
+  src: TokenSource,
+  n: number,
+  sinceMs: number,
+  models?: ModelDays,
+  model?: unknown,
+): void {
   if (!ts || !Number.isFinite(n) || n <= 0) return;
   const d = new Date(ts);
   if (!(d.getTime() >= sinceMs)) return;
-  const day = (days[dayKey(d)] ??= {});
+  const key = dayKey(d);
+  const day = (days[key] ??= {});
   day[src] = (day[src] ?? 0) + n;
+  if (models) {
+    const m = (models[key] ??= {});
+    const k = `${src}\t${modelLabel(model)}`;
+    m[k] = (m[k] ?? 0) + n;
+  }
 }
 
-export function scanTokens(days: number, now = Date.now()): TokenDays {
+/** Pass `models` to also collect tokens per model. */
+export function scanTokens(days: number, now = Date.now(), models?: ModelDays): TokenDays {
   const start = new Date(now - (days - 1) * 86400_000);
   start.setHours(0, 0, 0, 0);
   const sinceMs = start.getTime();
@@ -80,15 +107,18 @@ export function scanTokens(days: number, now = Date.now()): TokenDays {
         (u.output_tokens ?? 0) +
         (u.cache_creation_input_tokens ?? 0) +
         (u.cache_read_input_tokens ?? 0);
-      add(out, row.timestamp, "Claude Code", n, sinceMs);
+      add(out, row.timestamp, "Claude Code", n, sinceMs, models, m.model);
     });
   }
 
   for (const sub of ["sessions", "archived_sessions"]) {
     for (const f of jsonlFiles(join(codexHome(), sub), sinceMs, (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))) {
-      eachLine(f, '"token_count"', (row) => {
+      // token_count rows carry no model; the turn_context before them does
+      let model: unknown;
+      eachLine(f, ['"turn_context"', '"token_count"'], (row) => {
+        if (row.type === "turn_context") model = row.payload?.model ?? model;
         const n = row.payload?.info?.last_token_usage?.total_tokens;
-        if (row.payload?.type === "token_count") add(out, row.timestamp, "Codex", n, sinceMs);
+        if (row.payload?.type === "token_count") add(out, row.timestamp, "Codex", n, sinceMs, models, model);
       });
     }
   }
@@ -97,7 +127,7 @@ export function scanTokens(days: number, now = Date.now()): TokenDays {
     eachLine(f, '"totalTokens"', (row) => {
       const m = row.message;
       if (row.type === "message" && m?.role === "assistant") {
-        add(out, row.timestamp ?? m.timestamp, "pi", m.usage?.totalTokens, sinceMs);
+        add(out, row.timestamp ?? m.timestamp, "pi", m.usage?.totalTokens, sinceMs, models, m.model);
       }
     });
   }
@@ -113,7 +143,7 @@ export function humanTokens(n: number): string {
 
 const SOURCES: TokenSource[] = ["Claude Code", "Codex", "pi"];
 
-export function formatTokens(data: TokenDays, days: number, now = Date.now()): string {
+export function formatTokens(data: TokenDays, days: number, now = Date.now(), models?: ModelDays): string {
   const dayList: string[] = [];
   for (let i = days - 1; i >= 0; i--) dayList.push(dayKey(new Date(now - i * 86400_000)));
   const lines = [`Local tokens · last ${days} days (input + output + cache)`, ""];
@@ -129,6 +159,14 @@ export function formatTokens(data: TokenDays, days: number, now = Date.now()): s
     );
   }
   if (grand === 0) lines.push("No session logs found in this range.");
+  const byModel = models ? modelSeries(models, dayList) : [];
+  if (byModel.length) {
+    lines.push("", "By model");
+    for (const m of byModel) {
+      const total = m.days.reduce((a, b) => a + b, 0);
+      lines.push(`${m.label.padEnd(24)} ${humanTokens(total).padStart(6)}  ${m.source}`);
+    }
+  }
   return lines.join("\n") + "\n";
 }
 
@@ -143,18 +181,40 @@ export function tokensCsv(data: TokenDays): string {
   return rows.join("\n") + "\n";
 }
 
+export interface ModelSeries {
+  /** "Opus 5.5"; "(pi)" etc. appended only when two agents report the same name */
+  label: string;
+  source: TokenSource;
+  days: number[];
+}
+
 export interface TokenSeries {
   generatedAt: string;
   days: string[];
   sources: Record<TokenSource, number[]>;
+  /** biggest total first */
+  models: ModelSeries[];
 }
 
-export function tokenSeries(data: TokenDays, days: number, now = Date.now()): TokenSeries {
+function modelSeries(models: ModelDays, dayList: string[]): ModelSeries[] {
+  const keys = new Set(dayList.flatMap((d) => Object.keys(models[d] ?? {})));
+  const out = [...keys].map((k) => {
+    const [source, label] = k.split("\t") as [TokenSource, string];
+    return { label, source, days: dayList.map((d) => models[d]?.[k] ?? 0) };
+  });
+  const sum = (m: ModelSeries) => m.days.reduce((a, b) => a + b, 0);
+  const count = new Map<string, number>();
+  for (const m of out) count.set(m.label, (count.get(m.label) ?? 0) + 1);
+  for (const m of out) if (count.get(m.label)! > 1) m.label = `${m.label} (${m.source})`;
+  return out.sort((a, b) => sum(b) - sum(a));
+}
+
+export function tokenSeries(data: TokenDays, days: number, now = Date.now(), models: ModelDays = {}): TokenSeries {
   const dayList: string[] = [];
   for (let i = days - 1; i >= 0; i--) dayList.push(dayKey(new Date(now - i * 86400_000)));
   const sources = {} as Record<TokenSource, number[]>;
   for (const src of SOURCES) sources[src] = dayList.map((d) => data[d]?.[src] ?? 0);
-  return { generatedAt: new Date(now).toISOString(), days: dayList, sources };
+  return { generatedAt: new Date(now).toISOString(), days: dayList, sources, models: modelSeries(models, dayList) };
 }
 
 /** Scanning months of logs takes a second or two; the bar popup reuses a recent result. */
@@ -164,12 +224,13 @@ export function cachedTokenSeries(days: number, maxAgeSec: number, force = false
     try {
       const cached = JSON.parse(readFileSync(path, "utf8")) as TokenSeries;
       const age = (Date.now() - Date.parse(cached.generatedAt)) / 1000;
-      if (age >= 0 && age < maxAgeSec && cached.days.at(-1) === dayKey()) return cached;
+      if (age >= 0 && age < maxAgeSec && cached.days.at(-1) === dayKey() && Array.isArray(cached.models)) return cached;
     } catch {
       // no cache yet
     }
   }
-  const series = tokenSeries(scanTokens(days), days);
+  const models: ModelDays = {};
+  const series = tokenSeries(scanTokens(days, Date.now(), models), days, Date.now(), models);
   try {
     mkdirSync(cacheDir(), { recursive: true });
     writeFileSync(path + ".tmp", JSON.stringify(series));

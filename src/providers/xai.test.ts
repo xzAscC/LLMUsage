@@ -112,7 +112,7 @@ describe("fetchXai", () => {
     const r = await fetchXai(auth, tempAuthFile(auth));
     expect(r.ok).toBe(false);
     expect(tokenEndpointCalls).toBe(0);
-    expect(r.error).toMatch(/OpenCode is running/);
+    expect(r.error).toBe("Updates on your next OpenCode message");
   });
 
   test("refreshes and persists when the owning agent is idle", async () => {

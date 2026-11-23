@@ -1,6 +1,6 @@
 # LLMUsage
 
-**Track Claude / ChatGPT / GLM / Grok / Kimi / MiniMax subscription usage from your Hyprland bar.**
+**Track Claude / ChatGPT / GLM / Grok / Antigravity / Kimi / MiniMax subscription usage from your Hyprland bar.**
 
 There are plenty of LLM usage monitors — web dashboards, browser extensions, Electron widgets, macOS menu-bar apps like [Headroom](https://github.com/BioInfo/headroom). Most of them fall short if you actually live on a tiling compositor:
 
@@ -26,29 +26,36 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 - **OpenAI / Codex (ChatGPT OAuth)** — rate windows, credit balance, **rate-limit reset credits**
 - **GLM / Z.AI Coding Plan** — session 5h + weekly token quotas, plan name
 - **Grok / xAI** — weekly SuperGrok pool + **usage-limit resets**
+- **Google Antigravity** — Gemini and Claude+GPT pools, 5h + weekly each, plan from the paid tier; shown when pi has an Antigravity login. The OAuth client is not in this repo: it comes from `ANTIGRAVITY_CLIENT_ID`/`ANTIGRAVITY_CLIENT_SECRET`, else it is read as text (never run) from the installed pi-antigravity
 - **Kimi** and **MiniMax** coding plans — optional, shown only when a token/key is configured
 - **Pace vs even burn** on every rolling window: `14% in reserve`, `on pace · lands ~98%`, `8% in deficit · runs out ~21:40`
 - **Stale, not blank** — when a refresh fails, the last good reading stays (dimmed, “as of 2h ago”) for up to 3 days
+- **Login end** — a Claude login ends on a fixed date that refreshing does not move; the card warns in the last 3 days (“Login expires in 2 days · run /login”), as Claude Code does
 - **History** — daily peak + mean per window, `llm-usage history` with sparklines / CSV
-- **Local token totals** — per-day tokens from Claude Code, Codex and pi session logs (`llm-usage tokens`)
+- **Local token totals** — tokens per day and per model from Claude Code, Codex and pi session logs (`llm-usage tokens`)
 - **Alerts** — fire once per threshold crossing (75/90/95), on exhaustion/reset, optionally on pace deficit
 - **`llm-usage doctor`** — which store each credential comes from, expiry, refresh ownership, live check, integration
 - **Tests**: `bun test` (credential stores are sandboxed; tests never touch your real logins)
 
 ### Where credentials come from
 
-First usable source wins; a token rejected with 401 falls through to the next one.
+One card = one login: the first store that holds a login is used and the others are ignored, so a failing login never shows another account's numbers (an old ChatGPT login left in pi, say).
 
 | Provider | Sources, in order |
 |----------|-------------------|
 | Claude | `~/.claude/.credentials.json` → pi `anthropic` → OpenCode `anthropic` |
 | OpenAI | `~/.codex/auth.json` → pi `openai-codex` → OpenCode `openai` |
 | Grok / xAI | `~/.grok/auth.json` (grok CLI) → pi `xai` → OpenCode `xai` |
+| Antigravity | pi `antigravity` ([pi-antigravity](https://github.com/Rahularya01/pi-antigravity), `/login antigravity`) |
 | GLM | `$ZAI_API_KEY` / `$ZHIPUAI_API_KEY` / `$GLM_API_KEY` → `~/.z-ai-api-key` → pi `zai` → OpenCode `zai-coding-plan` |
 | Kimi | `$KIMI_TOKEN` → `~/.config/llm-usage/kimi-token` (kimi.com `localStorage.access_token`, ~30 days) |
 | MiniMax | `$MINIMAX_API_KEY` → `~/.minimax-api-key` → pi / OpenCode `minimax` |
 
-**Refresh ownership:** an expired OAuth token is refreshed — and the rotated token written back to its own file under a lock — **only while the agent that owns it is not running** (`claude`, `codex`, `pi`, `opencode`, `grok`, detected via `/proc`). While the agent runs, it stays the sole rotator and LLMUsage moves on to the next source, so it never races the agent for a single-use refresh token.
+**Refresh ownership:** an expired OAuth token is refreshed — and the rotated token written back to its own file under a lock — **only while the agent that owns it is not running** (`claude`, `codex`, `pi`, `opencode`, `grok`, detected via `/proc`). While the agent runs, it stays the sole rotator, so LLMUsage never races it for a single-use refresh token.
+
+**While the agent runs**, LLMUsage leaves an expired token to it: the card keeps its last reading, greyed, with one line such as "Updates on your next Claude Code message · 2h ago", and the agent refreshes the token on its next request. When LLMUsage does refresh Claude Code's token (no `claude` running), it takes Claude Code's own locks (`<config dir>/.oauth_refresh.lock`, then `<config dir>.lock`, and `<config dir>/.storage-write.lock` for the write), so a session that starts meanwhile waits and re-reads the file. It writes only over the same login: a `/login` or `/logout` made meanwhile wins, and a file that does not parse is left alone. It asks for the login's existing scopes and keeps `refreshTokenExpiresAt` up to date. A stale lock is broken only if it is an empty directory. A collector stopped by a signal starts no new refresh and lets a running one write its token (up to 30 s); a second Ctrl-C a second later exits at once.
+
+**Antigravity:** Google's refresh tokens do not rotate, so while pi runs, LLMUsage gets an access token for its own call and leaves pi's file alone.
 
 ---
 
@@ -123,7 +130,7 @@ Also set `projectRoot` (and `bunPath` if needed) near the top of `LlmUsageBar.qm
 | Left click | Open the popup (stays open while hovered; closes when the pointer leaves) |
 | Right click | Force refresh |
 
-The look follows [Headroom](https://github.com/BioInfo/headroom): a warm cream/espresso palette (light/dark follows ii's dark mode), a chef-hat gauge that fills bottom-up in the tier color, and one card per provider. Each card has a 20-segment olive→amber→terracotta→rust meter with an even-burn pace tick, "resets in … · 12% in reserve / empties ~21:40", plan chip, status dot, a link to the provider's usage page, and the credential source. The header sums things up ("3 comfortable · 1 tight") and, when one plan runs hot, suggests the one with the most room. The chart button switches to **Usage History**: token tiles (yesterday / 7 / 30 days), a token trend per agent, and the recorded daily peak per window.
+The look follows [Headroom](https://github.com/BioInfo/headroom): a warm cream/espresso palette (light/dark follows ii's dark mode), a chef-hat gauge that fills bottom-up in the tier color, and one card per provider. Each card has a 20-segment olive→amber→terracotta→rust meter with an even-burn pace tick, "resets in … · 12% in reserve / empties ~21:40", plan chip, status dot, and a link to the provider's usage page (`llm-usage doctor` tells which store each login comes from). Cards of similar height share a row, so every row lines up; an unused window reads "not started". The header sums things up ("3 comfortable · 1 tight") and, when one plan runs hot, suggests the one with the most room. The chart button switches to **Usage History**: token tiles (yesterday / 7 / 30 days), a token trend per agent, tokens per model over the last 7 days, and the recorded daily peak per window.
 
 Components live next to the widget (`Lu*.qml`); Loader-only integration is unchanged.
 
@@ -139,7 +146,7 @@ Reload the shell, e.g. `killall qs; qs -c ii &`.
 Claude Code / Codex / pi / grok CLI / OpenCode credential files
                                │  (refresh only if owner idle)
                                ▼
-        providers (Anthropic / ChatGPT / Z.AI / xAI / Kimi / MiniMax APIs)
+        providers (Anthropic / ChatGPT / Z.AI / xAI / Antigravity / Kimi / MiniMax APIs)
                                │
           ┌────────────────────┼─────────────────────────┐
           ▼                    ▼                         ▼
@@ -190,7 +197,7 @@ MIT
 | `*.resetCreditsDisplay` | `"all"` lists every reset credit / expiry; `"summary"` shows `4 available · next exp 7/18` |
 | `summary` | Bar number: `"max"` = tightest window (default), `"avg"` = mean across providers |
 | `thresholds` | Ring / Waybar colour levels |
-| `disabled` | Provider ids to skip: `anthropic`, `anthropic-<name>`, `openai`, `zai`, `xai`, `kimi`, `minimax` |
+| `disabled` | Provider ids to skip: `anthropic`, `anthropic-<name>`, `openai`, `zai`, `xai`, `antigravity`, `kimi`, `minimax` |
 | `notify.thresholds` | Alert once when a window climbs past each level |
 | `notify.exhausted` | Alert at 100% and again when the window resets |
 | `notify.pace` | Predictive alert when a window falls into pace deficit |

@@ -12,6 +12,8 @@ Rectangle {
 
     readonly property bool ok: !!provider.ok
     readonly property bool stale: !!provider.stale
+    // the token expired while its agent runs: not an error, the agent refreshes it on its next request
+    readonly property bool waiting: !!provider.waiting
     readonly property var meters: (provider.windows || []).filter(w => w.usedPercent != null || w.note === "unlimited")
     readonly property var chips: buildChips()
 
@@ -44,12 +46,23 @@ Rectangle {
                 out.push({ icon: "toll", text: w.label.trim() + " " + w.note.replace(/^balance /, "") })
             }
         }
+        const login = loginChip()
+        if (login) out.push(login)
         return out
+    }
+
+    // the login itself ends on a fixed date (Claude); warn in the last 3 days, like Claude Code
+    function loginChip() {
+        const left = Date.parse(provider.loginExpiresAt || "") - Date.now()
+        if (!(left <= 3 * 86400000)) return null
+        if (left <= 0) return { icon: "login", text: "Login expired · run /login", tone: "critical" }
+        const d = Math.ceil(left / 86400000)
+        return { icon: "login", text: "Login expires in " + d + (d === 1 ? " day" : " days") + " · run /login", tone: "warming" }
     }
 
     // extra Claude accounts keep their own name ("Claude OSU") so the two cards differ
     readonly property string title: provider.id !== skin.baseId(provider.id) ? provider.name : ({
-        anthropic: "Claude", openai: "OpenAI", zai: "GLM", xai: "Grok", kimi: "Kimi", minimax: "MiniMax"
+        anthropic: "Claude", openai: "OpenAI", zai: "GLM", xai: "Grok", kimi: "Kimi", minimax: "MiniMax", antigravity: "Antigravity"
     })[provider.id] || provider.name
 
     // "GLM Coding Max" on the GLM card reads twice; drop the brand prefix
@@ -98,6 +111,7 @@ Rectangle {
             }
             StyledText {
                 text: card.title
+                textFormat: Text.PlainText // names and errors come from servers and logs
                 color: card.skin.ink
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -114,6 +128,7 @@ Rectangle {
                     id: planText
                     anchors.centerIn: parent
                     text: card.plan.toUpperCase()
+                    textFormat: Text.PlainText // names and errors come from servers and logs
                     color: card.skin.bg2
                     font.pixelSize: 10
                     font.weight: Font.Bold
@@ -138,7 +153,7 @@ Rectangle {
                 implicitWidth: 7
                 implicitHeight: 7
                 radius: 3.5
-                color: !card.ok ? card.skin.critical : card.stale ? card.skin.warming : card.skin.healthy
+                color: card.waiting ? card.skin.faint : !card.ok ? card.skin.critical : card.stale ? card.skin.warming : card.skin.healthy
             }
         }
 
@@ -176,11 +191,12 @@ Rectangle {
                         MaterialSymbol {
                             text: modelData.icon
                             iconSize: 12
-                            color: card.skin.clay
+                            color: modelData.tone ? card.skin[modelData.tone] : card.skin.clay
                         }
                         StyledText {
                             text: modelData.text
-                            color: card.skin.ink2
+                            textFormat: Text.PlainText // names and errors come from servers and logs
+                            color: modelData.tone ? card.skin[modelData.tone] : card.skin.ink2
                             font.pixelSize: 11
                         }
                     }
@@ -194,48 +210,37 @@ Rectangle {
             Layout.fillWidth: true
             implicitHeight: errText.implicitHeight + 14
             radius: 7
-            color: card.skin.alpha(card.skin.critical, 0.10)
+            color: card.skin.alpha(card.waiting ? card.skin.faint : card.skin.critical, 0.10)
             border.width: 1
-            border.color: card.skin.alpha(card.skin.critical, 0.30)
+            border.color: card.skin.alpha(card.waiting ? card.skin.faint : card.skin.critical, 0.30)
             StyledText {
                 id: errText
                 anchors.fill: parent
                 anchors.margins: 7
                 text: card.provider.error || "Couldn't read usage."
+                textFormat: Text.PlainText // names and errors come from servers and logs
                 color: card.skin.ink2
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
             }
         }
 
-        // pushes the footer to the bottom so cards in a row share a baseline
+        // a card stretched to its row keeps its content at the top
         Item { Layout.fillHeight: true }
 
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 1
-            color: card.skin.alpha(card.skin.edge, 0.7)
-        }
-
         RowLayout {
+            visible: card.stale
             Layout.fillWidth: true
             spacing: 4
-            MaterialSymbol {
-                visible: !!card.provider.source
-                text: "key"
-                iconSize: 12
-                color: card.skin.faint
-            }
-            StyledText {
-                text: card.provider.source ? ("via " + card.provider.source) : "no credentials"
-                color: card.skin.faint
-                font.pixelSize: 11
-            }
-            Item { Layout.fillWidth: true }
             StyledText {
                 visible: card.stale
-                text: "couldn't refresh · as of " + card.skin.ago(card.provider.asOf)
-                color: card.skin.warming
+                text: card.waiting
+                    ? card.provider.error + " · " + card.skin.ago(card.provider.asOf)
+                    : "couldn't refresh · as of " + card.skin.ago(card.provider.asOf)
+                color: card.waiting ? card.skin.faint : card.skin.warming
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                Layout.fillWidth: true
                 font.pixelSize: 11
             }
         }

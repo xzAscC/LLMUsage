@@ -85,6 +85,28 @@ MouseArea {
         utilProc.running = true
     }
 
+    // --- card layout: how tall a card is, in meter rows (data only, no measuring) ---
+    function cardWeight(p) {
+        const ws = p.windows || []
+        const meters = ws.filter(w => w.usedPercent != null || w.note === "unlimited").length
+        const notes = ws.some(w => w.usedPercent == null && w.note && w.note !== "unlimited")
+        const login = Date.parse(p.loginExpiresAt || "") - Date.now() <= 3 * 86400000
+        return (p.ok ? meters : 1) + (notes || login ? 0.5 : 0)
+    }
+
+    // Equal-height rows: pair the two tallest cards, then the next two, ...;
+    // each pair keeps the config order left to right, rows keep it top to bottom.
+    function arrange(ps, columns) {
+        if (columns < 2) return ps
+        const byWeight = ps.map((p, i) => ({ p: p, i: i, w: cardWeight(p) }))
+            .sort((a, b) => b.w - a.w || a.i - b.i)
+        const rows = []
+        for (let k = 0; k < byWeight.length; k += columns)
+            rows.push(byWeight.slice(k, k + columns).sort((a, b) => a.i - b.i))
+        rows.sort((a, b) => a[0].i - b[0].i)
+        return [].concat.apply([], rows).map(x => x.p)
+    }
+
     // --- capacity summary across providers (Headroom's "3 comfortable · 1 tight") ---
     function tightest(p) {
         const nums = (p.windows || []).map(w => w.usedPercent).filter(n => n != null)
@@ -296,7 +318,10 @@ MouseArea {
                 readonly property int columns: root.providers.length >= 4 ? 2 : 1
                 readonly property real cardWidth: 320
                 implicitWidth: content.width + 28
-                implicitHeight: content.implicitHeight + 28
+                // switching views never shrinks the panel: a shorter view would
+                // pull the toggle out from under the pointer and close the popup
+                property real minHeight: 0
+                implicitHeight: Math.max(content.implicitHeight + footer.implicitHeight + 38, minHeight)
                 radius: 12
                 color: lu.bg
                 border.width: 1
@@ -308,7 +333,9 @@ MouseArea {
 
                 ColumnLayout {
                     id: content
-                    anchors.centerIn: parent
+                    anchors.top: parent.top
+                    anchors.topMargin: 14
+                    anchors.horizontalCenter: parent.horizontalCenter
                     width: panel.columns * panel.cardWidth + (panel.columns - 1) * 10
                     spacing: 10
 
@@ -408,7 +435,7 @@ MouseArea {
                         }
                     }
 
-                    // cards
+                    // cards: rows of similar-height cards, each row as tall as its tallest
                     GridLayout {
                         visible: !root.showHistory
                         Layout.fillWidth: true
@@ -416,7 +443,7 @@ MouseArea {
                         columnSpacing: 10
                         rowSpacing: 10
                         Repeater {
-                            model: root.providers
+                            model: root.arrange(root.providers, panel.columns)
                             delegate: LuCard {
                                 required property var modelData
                                 Layout.preferredWidth: panel.cardWidth
@@ -430,6 +457,7 @@ MouseArea {
                     StyledText {
                         visible: !root.showHistory && !root.ready
                         text: root.lastError || "Loading…"
+                        textFormat: Text.PlainText // names and errors come from servers and logs
                         color: lu.faint
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
@@ -444,8 +472,17 @@ MouseArea {
                         utilization: root.utilization
                         loading: root.historyLoading
                     }
+                }
 
-                    // footer
+                // footer, pinned to the bottom edge so the view toggle stays put
+                ColumnLayout {
+                    id: footer
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 14
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: content.width
+                    spacing: 10
+
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: 1
@@ -470,7 +507,10 @@ MouseArea {
                                 anchors.margins: -4
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showHistory = !root.showHistory
+                                onClicked: {
+                                    panel.minHeight = panel.height
+                                    root.showHistory = !root.showHistory
+                                }
                             }
                         }
                     }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { claudeAccountSources, fetchAnthropic } from "./anthropic.ts";
+import { claudeAccountSources, fetchAnthropic, refreshClaudeToken } from "./anthropic.ts";
 import type { AuthFile } from "../auth.ts";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -52,7 +52,7 @@ describe("fetchAnthropic", () => {
           seven_day_opus: null,
         }),
         { status: 200 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(true);
@@ -93,7 +93,7 @@ describe("fetchAnthropic", () => {
           ],
         }),
         { status: 200 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(true);
@@ -115,7 +115,7 @@ describe("fetchAnthropic", () => {
           error: { type: "rate_limit_error", message: "Rate limited" },
         }),
         { status: 429 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(false);
@@ -144,5 +144,42 @@ describe("fetchAnthropic", () => {
     expect(r.plan).toBe("team");
     expect(seen).toBe("Bearer SECRET_TEAM_TOKEN");
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("Claude login lifetime", () => {
+  test("refresh asks for the login's scopes and records when the login ends", async () => {
+    let body: any = null;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(
+        JSON.stringify({ access_token: "NEW", refresh_token: "R2", expires_in: 28800, refresh_token_expires_in: 86400, scope: "user:inference user:profile" }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const before = Date.now();
+    const next = await refreshClaudeToken({ type: "oauth", access: "OLD", refresh: "R1", scopes: ["user:inference", "user:profile", "user:mcp_servers"] });
+    expect(body).toMatchObject({ grant_type: "refresh_token", refresh_token: "R1", scope: "user:inference user:profile user:mcp_servers" });
+    expect(next.refresh).toBe("R2");
+    expect(next.scopes).toEqual(["user:inference", "user:profile"]);
+    expect(next.refreshExpires! - before).toBeGreaterThanOrEqual(86400_000);
+    expect(next.refreshExpires! - before).toBeLessThan(86400_000 + 5000);
+  });
+
+  test("refresh without the new fields keeps the old login end and scopes", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ access_token: "NEW", expires_in: 100 }), { status: 200 })) as unknown as typeof fetch;
+    const next = await refreshClaudeToken({ type: "oauth", access: "OLD", refresh: "R1", scopes: ["a"], refreshExpires: 123 });
+    expect(next).toMatchObject({ refresh: "R1", scopes: ["a"], refreshExpires: 123 });
+  });
+
+  test("the card carries when the login ends", async () => {
+    const ends = Date.now() + 2 * 86400_000;
+    writeClaudeCreds({ accessToken: "T", refreshToken: "R", expiresAt: Date.now() + 3600_000, refreshTokenExpiresAt: ends });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ five_hour: { utilization: 1, resets_at: "2099-01-01T00:00:00Z" } }), { status: 200 })) as unknown as typeof fetch;
+    const r = await fetchAnthropic({});
+    expect(r.ok).toBe(true);
+    expect(r.loginExpiresAt).toBe(new Date(ends).toISOString());
   });
 });

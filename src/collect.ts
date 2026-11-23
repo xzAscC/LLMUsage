@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from "node:fs";
 import type { AuthFile } from "./auth.ts";
 import { claudeAccountId, loadConfig } from "./config.ts";
-import { loadStores } from "./credentials.ts";
+import { isWaitingNote, loadStores } from "./credentials.ts";
 import { appendHistory } from "./history.ts";
 import { cacheDir, cacheSnapshotPath } from "./paths.ts";
 import { finalizeProvider, finalizeSnapshot } from "./severity.ts";
@@ -13,6 +13,7 @@ import { fetchXai } from "./providers/xai.ts";
 import { claudeAccountSources, fetchAnthropic } from "./providers/anthropic.ts";
 import { fetchKimi } from "./providers/kimi.ts";
 import { fetchMinimax } from "./providers/minimax.ts";
+import { fetchAntigravity } from "./providers/antigravity.ts";
 
 /** How long a last-good reading may stand in for a failing provider. */
 const STALE_MAX_MS = 3 * 86400_000;
@@ -32,6 +33,7 @@ export async function collectUsage(opencode?: AuthFile): Promise<UsageSnapshot> 
     ["openai", () => fetchOpenAI(stores.opencode)],
     ["zai", () => fetchZai(stores.opencode)],
     ["xai", () => fetchXai(stores.opencode)],
+    ["antigravity", () => fetchAntigravity(stores.opencode)],
     ["kimi", () => fetchKimi()],
     ["minimax", () => fetchMinimax(stores.opencode)],
   ];
@@ -41,7 +43,7 @@ export async function collectUsage(opencode?: AuthFile): Promise<UsageSnapshot> 
   const previous = loadCachedSnapshot();
   const providers = fetched
     .filter((p): p is ProviderStatus => p != null)
-    .map((p) => withStaleFallback(p, previous));
+    .map((p) => withStaleFallback(isWaitingNote(p.error) ? { ...p, waiting: true } : p, previous));
   const snapshot = finalizeSnapshot(providers, cfg.thresholds, cfg.summary);
   saveSnapshot(snapshot);
   appendHistory(snapshot, cfg.historyDays);
@@ -76,6 +78,9 @@ export function withStaleFallback(
     stale: true,
     asOf,
     error: current.error,
+    waiting: current.waiting,
+    // only from the current login: an older snapshot may predate a new /login
+    loginExpiresAt: current.loginExpiresAt,
     windows,
     fetchedAt: current.fetchedAt,
   });
