@@ -1,27 +1,39 @@
 integrations/quickshell/bar/LuSkin.qml
   s_dcfd869ac9977a::t_9b77ad73f8adfa 46
+  s_3e329b0fd5e873::t_74241c2af4694b 46
 integrations/quickshell/bar/LuCard.qml
   s_dcfd869ac9977a::t_9b77ad73f8adfa 52
+  s_3e329b0fd5e873::t_3f5b8d199981e3 52
 src/collect.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 16,36
+  s_3e329b0fd5e873::t_ba3f63d6e6d2cc 16,36
 src/format.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 35,42,45,106-107
+  s_3e329b0fd5e873::t_e85f653d8dda90 35,42,45,106-107
 src/providers/antigravity.test.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 1-110
   s_dcfd869ac9977a::t_4e4dd28c4bf472 111-144
+  s_3e329b0fd5e873::t_00827dc621f954 1,3-7,9-12,20-21,25-94,97-114,117-123
 src/oauth-refresh.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 16,26-27,52,59,107-138
   s_dcfd869ac9977a::t_9c524da8e7812f 139
+  s_3e329b0fd5e873::t_4982b31cc88da3 26,27,52,59,131-134,137-139
 src/providers/antigravity.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 1-169
+  s_3e329b0fd5e873::t_20c5a6d967196d 1-152
+  s_3e329b0fd5e873::t_75485a28197481 153-169
 src/credentials.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 322-326
+  s_3e329b0fd5e873::t_91540b8cebc817 322-326
 src/types.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 9-10
+  s_3e329b0fd5e873::t_57d9498e229781 9-10
 README.md
   s_dcfd869ac9977a::t_9b77ad73f8adfa 3,29,48,144,195
+  s_3e329b0fd5e873::t_8dbd4b531b862e 3,29,48,144,195
 src/doctor.ts
   s_dcfd869ac9977a::t_9b77ad73f8adfa 8,57
+  s_3e329b0fd5e873::t_2bfc5306510626 8,57
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -29,6 +41,14 @@ src/doctor.ts
   "base_commit_sha": "2c8b571c1647faff64f7a629bbae59575282500b",
   "prompts": {},
   "sessions": {
+    "s_3e329b0fd5e873": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "522b9d83-c9c8-4447-a1d2-003647473861",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    },
     "s_dcfd869ac9977a": {
       "agent_id": {
         "tool": "claude",
