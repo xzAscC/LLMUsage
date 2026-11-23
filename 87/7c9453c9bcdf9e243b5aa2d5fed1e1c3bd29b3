@@ -1,0 +1,19 @@
+integrations/quickshell/bar/LuHistory.qml
+  s_ea0ad225cca149::t_17fcea64f00bca 97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "877c9453c9bcdf9e243b5aa2d5fed1e1c3bd29b3",
+  "prompts": {},
+  "sessions": {
+    "s_ea0ad225cca149": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ad68cae-3cf0-4005-9084-6c258a910101",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
