@@ -219,30 +219,13 @@ Rectangle {
             }
         }
 
-        // pushes the footer to the bottom so cards in a row share a baseline
+        // a card stretched to its row keeps its content at the top
         Item { Layout.fillHeight: true }
 
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 1
-            color: card.skin.alpha(card.skin.edge, 0.7)
-        }
-
         RowLayout {
+            visible: card.stale
             Layout.fillWidth: true
             spacing: 4
-            MaterialSymbol {
-                visible: !!card.provider.source
-                text: "key"
-                iconSize: 12
-                color: card.skin.faint
-            }
-            StyledText {
-                text: card.provider.source ? ("via " + card.provider.source) : "no credentials"
-                color: card.skin.faint
-                font.pixelSize: 11
-            }
-            Item { Layout.fillWidth: true }
             StyledText {
                 visible: card.stale
                 text: "couldn't refresh · as of " + card.skin.ago(card.provider.asOf)

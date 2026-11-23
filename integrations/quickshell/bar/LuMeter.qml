@@ -84,9 +84,19 @@ ColumnLayout {
         color: meter.skin.alpha(meter.skin.healthy, 0.18)
     }
 
+    // an unused window has no reset time yet; say so, which also keeps every
+    // meter the same height so meters in a row of cards line up
+    readonly property bool notStarted: meter.win.usedPercent === 0 && meter.secs < 0 && !meter.pace
+
     RowLayout {
-        visible: !meter.unlimited && (meter.secs >= 0 || !!meter.pace)
+        visible: !meter.unlimited && (meter.secs >= 0 || !!meter.pace || meter.notStarted)
         spacing: 5
+        StyledText {
+            visible: meter.notStarted
+            text: "not started"
+            color: meter.skin.faint
+            font.pixelSize: 11
+        }
         StyledText {
             visible: meter.secs >= 0
             text: "resets " + meter.skin.relIn(meter.secs)
