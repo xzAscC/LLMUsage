@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   type AuthFile,
   type OAuthCredential,
@@ -22,7 +22,7 @@ import {
   opencodeAuthPath,
   piAuthPath,
 } from "./paths.ts";
-import { isAnyRunning } from "./procs.ts";
+import { isAnyRunning, runningExes } from "./procs.ts";
 
 /**
  * Credentials are read from the agents you already log into — Claude Code,
@@ -64,7 +64,7 @@ export interface OAuthSource {
    * Safe to refresh while the owner runs: we take the owner's own refresh
    * lock, and the owner re-reads the file under that lock (Claude Code).
    */
-  refreshWhileRunning?: boolean;
+  refreshWhileRunning?: () => boolean;
   /** Refresh under a lock and write the rotated token back to the owner's file. */
   refresh(refresher: OAuthRefresher, force: boolean): Promise<OAuthCredential | null>;
 }
@@ -144,6 +144,27 @@ export function claudeCodeLockPaths(credPath: string): string[] {
   return [join(dir, ".oauth_refresh.lock"), `${real}.lock`];
 }
 
+/**
+ * Oldest Claude Code seen to take both locks and re-read the file inside them
+ * (the strings are in the 2.1.328–2.1.330 binaries; strace on 2.1.330).
+ */
+const CLAUDE_SHARED_LOCK_SINCE = [2, 1, 328] as const;
+
+/**
+ * Every running `claude` is a native Claude Code build (…/versions/X.Y.Z)
+ * at least CLAUDE_SHARED_LOCK_SINCE. Anything else (an older build, an npm
+ * install, an unreadable process) and we wait for it to refresh, as before.
+ */
+export function claudeSharesLock(exes = runningExes("claude")): boolean {
+  return exes.every((exe) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(basename(exe));
+    if (!m) return false;
+    const v = m.slice(1).map(Number);
+    const floor = CLAUDE_SHARED_LOCK_SINCE;
+    return v[0] !== floor[0] ? v[0]! > floor[0] : v[1] !== floor[1] ? v[1]! > floor[1] : v[2]! >= floor[2];
+  });
+}
+
 export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | null {
   const found = readClaudeCode(path);
   if (!found) return null;
@@ -153,7 +174,7 @@ export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | 
     path,
     cred: found.cred,
     plan: found.plan,
-    refreshWhileRunning: true,
+    refreshWhileRunning: () => claudeSharesLock(),
     refresh: (refresher, force) =>
       refreshFileCredential({
         requested: found.cred,
@@ -453,7 +474,7 @@ export async function callWithOAuth<T>(
       !ended &&
       refresher &&
       source.cred.refresh &&
-      (source.refreshWhileRunning || !ownerRunning(source.owner))
+      (!ownerRunning(source.owner) || !!source.refreshWhileRunning?.())
     );
     let cred = source.cred;
 
@@ -484,7 +505,7 @@ export async function callWithOAuth<T>(
         }
       }
       problems.push(
-        ownerRunning(source.owner) && !source.refreshWhileRunning
+        ownerRunning(source.owner) && !source.refreshWhileRunning?.()
           ? `${source.label}: token rejected (${source.label} is running and will refresh it on next use)`
           : `${source.label}: token rejected — log in again`,
       );

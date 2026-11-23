@@ -9,6 +9,7 @@ import {
   callWithOAuth,
   claudeCodeLockPaths,
   claudeCodeSource,
+  claudeSharesLock,
   codexSource,
   CredentialError,
   loadStores,
@@ -150,6 +151,43 @@ const ccExpired = (access: string) => ({
   accountUuid: "acct",
 });
 
+/** a native Claude Code build is running (the installer's versions/<X.Y.Z> binary) */
+function claudeRunning(version = "2.1.330") {
+  setRunningProcesses(["claude"], { claude: [`/home/u/.local/share/claude/versions/${version}`] });
+}
+
+describe("which Claude Code builds share the refresh lock", () => {
+  test("2.1.328 and later, native builds only", () => {
+    const v = (x: string) => `/home/u/.local/share/claude/versions/${x}`;
+    expect(claudeSharesLock([v("2.1.330")])).toBe(true);
+    expect(claudeSharesLock([v("2.1.328"), v("2.2.0"), v("3.0.0")])).toBe(true);
+    expect(claudeSharesLock([v("2.1.327")])).toBe(false);
+    expect(claudeSharesLock([v("2.1.330"), v("2.0.99")])).toBe(false);
+    expect(claudeSharesLock(["/usr/bin/node"])).toBe(false);
+    expect(claudeSharesLock([""])).toBe(false);
+  });
+
+  for (const [what, exe] of [
+    ["an older build", "/home/u/.local/share/claude/versions/2.1.200"],
+    ["an npm install", "/usr/bin/node"],
+  ] as const) {
+    test(`while ${what} runs, we wait for it to refresh, as before`, async () => {
+      const { path } = claudeDir(ccExpired("A"));
+      setRunningProcesses(["claude"], { claude: [exe] });
+      let refreshed = false;
+      await callWithOAuth(
+        [claudeCodeSource(path)!],
+        () => async () => {
+          refreshed = true;
+          return fresh("A2");
+        },
+        async (c) => c.access,
+      );
+      expect(refreshed).toBe(false);
+    });
+  }
+});
+
 describe("Claude Code credentials", () => {
   test("lock paths are Claude Code's own: <dir>/.oauth_refresh.lock, then <dir>.lock", () => {
     const { dir, path } = claudeDir(ccExpired("A"));
@@ -158,7 +196,7 @@ describe("Claude Code credentials", () => {
 
   test("refreshes while claude runs, keeps every other field, releases both locks", async () => {
     const { dir, path, read } = claudeDir(ccExpired("A"));
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     let seen: OAuthCredential | null = null;
     const refresher = async (c: OAuthCredential) => {
       seen = c;
@@ -189,7 +227,7 @@ describe("Claude Code credentials", () => {
       const { dir, path } = claudeDir(ccExpired("A"));
       const lock = which === "new" ? join(dir, ".oauth_refresh.lock") : `${dir}.lock`;
       mkdirSync(lock); // a Claude Code session is refreshing right now
-      setRunningProcesses(["claude"]);
+      claudeRunning();
       let refreshed = false;
       const pending = callWithOAuth(
         [claudeCodeSource(path)!],
@@ -233,7 +271,7 @@ describe("Claude Code credentials", () => {
   test("never sits on Claude Code's first lock while its second is busy", async () => {
     const { dir, path } = claudeDir(ccExpired("A"));
     mkdirSync(`${dir}.lock`); // a legacy holder
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     const pending = callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
     for (let i = 0; i < 5; i += 1) {
       await new Promise((r) => setTimeout(r, 30));
@@ -245,7 +283,7 @@ describe("Claude Code credentials", () => {
 
   test("a /login during our refresh wins over the tokens we got", async () => {
     const { path, read } = claudeDir(ccExpired("A"));
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     const refresher = async () => {
       // the user signs in to another account while the server answers us
       writeFileSync(path, JSON.stringify({ claudeAiOauth: { ...ccExpired("B"), expiresAt: Date.now() + 3600_000, subscriptionType: "max" } }));
@@ -258,7 +296,7 @@ describe("Claude Code credentials", () => {
 
   test("a file left half-written by another writer still gets our rotated token", async () => {
     const { path, read } = claudeDir(ccExpired("A"));
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     const refresher = async () => {
       writeFileSync(path, '{"claudeAiOauth": {'); // someone else's write, cut short
       return fresh("A2");
@@ -270,7 +308,7 @@ describe("Claude Code credentials", () => {
 
   test("a logout during our refresh stays a logout", async () => {
     const { path } = claudeDir(ccExpired("A"));
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     const refresher = async () => {
       rmSync(path);
       return fresh("A2");
@@ -297,7 +335,7 @@ describe("Claude Code credentials", () => {
 
   test("a 401 on an unexpired token does not rotate the login of a running session", async () => {
     const { path, read } = claudeDir({ ...ccExpired("A"), expiresAt: Date.now() + 3600_000 });
-    setRunningProcesses(["claude"]);
+    claudeRunning();
     let refreshed = false;
     const err = await callWithOAuth(
       [claudeCodeSource(path)!],

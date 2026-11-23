@@ -27,7 +27,7 @@ const BAD = "✗";
 
 function oauthLine(s: OAuthSource): string {
   const running = ownerRunning(s.owner);
-  const waits = running && !s.refreshWhileRunning;
+  const waits = running && !s.refreshWhileRunning?.();
   let state: string;
   if (loginEnded(s.cred)) state = "login expired — run /login";
   else if (s.cred.expires == null) state = "no expiry recorded";
