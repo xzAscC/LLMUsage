@@ -6,7 +6,6 @@ import {
   lstatSync,
   rmdirSync,
   rmSync,
-  statSync,
   utimesSync,
   writeFileSync,
 } from "fs";
@@ -34,6 +33,8 @@ const REFRESH_LOCK_POLL_MS = 25;
 /** Longer than a holder's own refresh budget (30 s), so we outwait a slow one. */
 const REFRESH_LOCK_TIMEOUT_MS = 40_000;
 const REFRESH_LOCK_STALE_MS = 120_000;
+/** Claude Code's own stale time for .storage-write.lock (its holder touches it every 7.5 s). */
+const STORAGE_LOCK_STALE_MS = 15_000;
 /** Touch held locks this often, as Claude Code does (proper-lockfile `update`); tests shorten it. */
 export const lockTiming = { beatMs: 5_000 };
 
@@ -118,8 +119,10 @@ export function xaiRefresher(clientId = XAI_OPENCODE_CLIENT_ID) {
  * (as text, never run) from the pi-antigravity extension installed in pi.
  */
 export async function antigravityClient(): Promise<{ id: string; secret: string }> {
-  const id = process.env.ANTIGRAVITY_CLIENT_ID;
-  const secret = process.env.ANTIGRAVITY_CLIENT_SECRET;
+  // the same lookup as pi-antigravity's antigravityEnv(), per constant
+  const env = (name: string) => process.env[`ANTIGRAVITY_${name}`] || process.env[`NOAGY_${name}`];
+  const id = env("CLIENT_ID");
+  const secret = env("CLIENT_SECRET");
   if (id && secret) return { id, secret };
   const path = join(piAgentDir(), "npm", "node_modules", "pi-antigravity", "src", "auth", "oauth.ts");
   let text: string;
@@ -130,7 +133,7 @@ export async function antigravityClient(): Promise<{ id: string; secret: string 
       "Antigravity OAuth client not found: install pi-antigravity in pi, or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
     );
   }
-  const client = { id: piConstant(text, "CLIENT_ID"), secret: piConstant(text, "CLIENT_SECRET") };
+  const client = { id: id || piConstant(text, "CLIENT_ID"), secret: secret || piConstant(text, "CLIENT_SECRET") };
   if (client.id && client.secret) return client as { id: string; secret: string };
   throw new Error(
     "Antigravity OAuth client: could not read CLIENT_ID/CLIENT_SECRET from pi-antigravity; set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
@@ -238,6 +241,8 @@ const heldLocks = new Set<string>();
 /** Locked actions still running (a refresh waiting on the server). */
 const running = new Set<Promise<unknown>>();
 let cleanupInstalled = false;
+/** A signal came: start no new locked action, finish the running ones. */
+let exiting = false;
 /** How long a signal waits for a running refresh; as long as its own budget. */
 const SIGNAL_GRACE_MS = 30_000;
 
@@ -247,27 +252,31 @@ function installLockCleanup(): void {
   // A killed collector must not leave Claude Code's refresh locks behind (its
   // sessions could not refresh until the lock goes stale, 60 s), nor drop a
   // token the server has just rotated: let a running refresh write it first.
+  // A second signal means "now".
   const codes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
-  let exiting = false;
+  const leave = (code: number) => {
+    for (const p of heldLocks) rmSync(p, { recursive: true, force: true });
+    process.exit(code);
+  };
   for (const [sig, code] of Object.entries(codes)) {
     process.on(sig, async () => {
-      if (exiting) return;
+      if (exiting) leave(code);
       exiting = true;
-      if (running.size) {
-        await Promise.race([Promise.allSettled([...running]), delay(SIGNAL_GRACE_MS)]);
+      const deadline = Date.now() + SIGNAL_GRACE_MS;
+      while (running.size && Date.now() < deadline) {
+        await Promise.race([Promise.allSettled([...running]), delay(deadline - Date.now())]);
       }
-      for (const p of heldLocks) rmSync(p, { recursive: true, force: true });
-      process.exit(code);
+      leave(code);
     });
   }
 }
 
 /**
  * mkdir the lock once. Break it only when it is an empty directory nobody has
- * touched for REFRESH_LOCK_STALE_MS, and only with rmdir: a file or a full
+ * touched for `staleMs`, and only with rmdir: a file or a full
  * directory at a lock path is not ours to delete, so it counts as busy.
  */
-function tryLock(lockPath: string): boolean {
+function tryLock(lockPath: string, staleMs = REFRESH_LOCK_STALE_MS): boolean {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       mkdirSync(lockPath, { mode: 0o700 });
@@ -277,7 +286,7 @@ function tryLock(lockPath: string): boolean {
       if (errorCode(err) !== "EEXIST") throw err;
       try {
         const st = lstatSync(lockPath);
-        if (!st.isDirectory() || Date.now() - st.mtimeMs <= REFRESH_LOCK_STALE_MS) return false;
+        if (!st.isDirectory() || Date.now() - st.mtimeMs <= staleMs) return false;
         rmdirSync(lockPath);
       } catch (statError) {
         const code = errorCode(statError);
@@ -303,15 +312,17 @@ export async function withFileLocks<T>(
   lockPaths: string[],
   label: string,
   action: () => Promise<T>,
-  timeoutMs = REFRESH_LOCK_TIMEOUT_MS,
+  opts: { timeoutMs?: number; staleMs?: number; nested?: boolean } = {},
 ): Promise<T> {
   installLockCleanup();
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + (opts.timeoutMs ?? REFRESH_LOCK_TIMEOUT_MS);
   while (true) {
+    // after a signal only a running action may take a lock (its final write)
+    if (exiting && !opts.nested) throw new Error(`${label}: exiting, no new refresh`);
     const held: string[] = [];
     try {
       for (const p of lockPaths) {
-        if (!tryLock(p)) break;
+        if (!tryLock(p, opts.staleMs)) break;
         held.push(p);
       }
       if (held.length === lockPaths.length) {
@@ -444,7 +455,16 @@ export async function refreshFileCredential(opts: {
       write(next);
       return next;
     };
-    return opts.writeLock ? withFileLocks([opts.writeLock], opts.label, finish) : finish();
+    if (!opts.writeLock) return finish();
+    try {
+      return await withFileLocks([opts.writeLock], `${opts.label} storage`, finish, {
+        staleMs: STORAGE_LOCK_STALE_MS,
+        nested: true,
+      });
+    } catch {
+      // the storage lock stayed held by a live writer: use the token for this call
+      return next;
+    }
   });
 }
 

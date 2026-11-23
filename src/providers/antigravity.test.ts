@@ -165,6 +165,16 @@ describe("fetchAntigravity", () => {
 });
 
 describe("antigravityClient", () => {
+  test("pi-antigravity's NOAGY_* names work too, and each constant falls back on its own", async () => {
+    installPiClient();
+    process.env.NOAGY_CLIENT_ID = "noagy-id";
+    try {
+      expect(await antigravityClient()).toEqual({ id: "noagy-id", secret: "fake-secret" });
+    } finally {
+      delete process.env.NOAGY_CLIENT_ID;
+    }
+  });
+
   test("the environment wins over pi-antigravity", async () => {
     installPiClient();
     process.env.ANTIGRAVITY_CLIENT_ID = "env-id";

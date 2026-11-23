@@ -18,7 +18,7 @@ import {
 } from "./credentials.ts";
 import { setRunningProcesses } from "./procs.ts";
 import { lockTiming, withFileLocks } from "./oauth-refresh.ts";
-import { statSync, utimesSync } from "node:fs";
+import { chmodSync, statSync, utimesSync } from "node:fs";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -420,6 +420,63 @@ await new Promise(() => setInterval(() => {}, 1000));`;
     expect([...locks, join(dir, ".storage-write.lock")].some((l) => existsSync(l))).toBe(false);
   });
 
+  test("a dead writer's storage lock is broken after Claude Code's 15 s, and our token is written", async () => {
+    const { dir, path, read } = claudeDir(ccExpired("A"));
+    const storage = join(dir, ".storage-write.lock");
+    mkdirSync(storage);
+    const old = new Date(Date.now() - 20_000); // older than 15 s, younger than 120 s
+    utimesSync(storage, old, old);
+    claudeRunning();
+    const { result } = await callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
+    expect(result).toBe("A2");
+    expect(read().claudeAiOauth.accessToken).toBe("A2");
+  });
+
+  test("after SIGTERM no new refresh starts; the running one finishes; a second signal exits at once", async () => {
+    const root = tmp();
+    const [lockX, lockY, marks] = [join(root, "x.lock"), join(root, "y.lock"), join(root, "marks")];
+    mkdirSync(lockY); // Y waits on a busy lock
+    const lib = JSON.stringify(join(import.meta.dir, "oauth-refresh.ts"));
+    const script = `import { withFileLocks } from ${lib};
+import { appendFileSync } from "node:fs";
+const mark = (m) => appendFileSync(${JSON.stringify(marks)}, m + "\\n");
+withFileLocks([${JSON.stringify(lockX)}], "X", async () => { mark("X started"); await new Promise((r) => setTimeout(r, 600)); mark("X done"); });
+withFileLocks([${JSON.stringify(lockY)}], "Y", async () => { mark("Y started"); }).catch(() => mark("Y refused"));
+setInterval(() => {}, 1000);`;
+    const child = Bun.spawn(["bun", "-e", script], { stdout: "ignore", stderr: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(lockX); i += 1) await new Promise((r) => setTimeout(r, 20));
+    child.kill("SIGTERM");
+    await new Promise((r) => setTimeout(r, 100));
+    rmSync(lockY, { recursive: true }); // Y could take its lock now
+    expect(await child.exited).toBe(143);
+    const log = readFileSync(marks, "utf8");
+    expect(log).toContain("X done");
+    expect(log).not.toContain("Y started");
+
+    // a second signal does not wait for the running action
+    const slow = Bun.spawn(["bun", "-e", `import { withFileLocks } from ${lib};
+withFileLocks([${JSON.stringify(join(root, "z.lock"))}], "Z", () => new Promise((r) => setTimeout(r, 20000)));`], { stdout: "ignore", stderr: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(join(root, "z.lock")); i += 1) await new Promise((r) => setTimeout(r, 20));
+    const t0 = Date.now();
+    slow.kill("SIGINT");
+    await new Promise((r) => setTimeout(r, 100));
+    slow.kill("SIGINT");
+    expect(await slow.exited).toBe(130);
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(existsSync(join(root, "z.lock"))).toBe(false);
+  });
+
+  test("a build we could not read is not remembered as 'no locks'", () => {
+    const exe = claudeBuild("2.1.331");
+    chmodSync(exe, 0o000);
+    try {
+      expect(claudeSharesLock([exe])).toBe(false);
+    } finally {
+      chmodSync(exe, 0o644);
+    }
+    expect(claudeSharesLock([exe])).toBe(true);
+  });
+
   test("a stale lock path that is a file or a full directory is never deleted", async () => {
     const { dir, path } = claudeDir(ccExpired("A"));
     const legacy = `${dir}.lock`;
@@ -428,7 +485,7 @@ await new Promise(() => setInterval(() => {}, 1000));`;
     const old = new Date(Date.now() - 10 * 60_000);
     utimesSync(legacy, old, old);
     claudeRunning();
-    const err = await withFileLocks(claudeCodeLockPaths(path), "test", async () => "got it", 300).catch((e) => e);
+    const err = await withFileLocks(claudeCodeLockPaths(path), "test", async () => "got it", { timeoutMs: 300 }).catch((e) => e);
     expect(String(err)).toMatch(/Timed out/);
     expect(readFileSync(legacy, "utf8")).toBe("not a lock");
   });

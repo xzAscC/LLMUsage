@@ -194,9 +194,13 @@ function buildNamesLocks(exe: string): boolean {
     // first check
   }
   if (typeof known[key] === "boolean") return known[key]!;
-  const ok = CLAUDE_LOCK_MARKERS.every(
-    (m) => spawnSync("grep", ["-q", "-a", "-F", "--", m, exe], { stdio: "ignore" }).status === 0,
+  // grep: 0 = found, 1 = not found; anything else (killed, unreadable) is no
+  // answer, so it says "wait" now and is not remembered
+  const answers = CLAUDE_LOCK_MARKERS.map(
+    (m) => spawnSync("grep", ["-q", "-a", "-F", "--", m, exe], { stdio: "ignore" }).status,
   );
+  if (answers.some((a) => a !== 0 && a !== 1)) return false;
+  const ok = answers.every((a) => a === 0);
   try {
     mkdirSync(cacheDir(), { recursive: true });
     writeFileSync(file, JSON.stringify({ ...known, [key]: ok }));
