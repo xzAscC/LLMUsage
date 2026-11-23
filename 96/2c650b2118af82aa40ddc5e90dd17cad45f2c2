@@ -1,0 +1,22 @@
+integrations/quickshell/bar/LlmUsageBar.qml
+  s_3e329b0fd5e873::t_8a0ea2f239957a 314-316
+  s_3e329b0fd5e873::t_2a1c291e17bbf2 299-302
+  s_3e329b0fd5e873::t_e918dd3e89229f 452-461
+  s_3e329b0fd5e873::t_a75fd96db1136a 487-490
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "962c650b2118af82aa40ddc5e90dd17cad45f2c2",
+  "prompts": {},
+  "sessions": {
+    "s_3e329b0fd5e873": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "522b9d83-c9c8-4447-a1d2-003647473861",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
