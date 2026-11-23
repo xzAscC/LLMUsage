@@ -237,6 +237,7 @@ ColumnLayout {
                 spacing: 8
                 StyledText {
                     text: modelData.label
+                    textFormat: Text.PlainText // names and errors come from servers and logs
                     color: hist.skin.ink2
                     font.pixelSize: 11
                     elide: Text.ElideRight
@@ -283,6 +284,7 @@ ColumnLayout {
                 spacing: 8
                 StyledText {
                     text: modelData.label
+                    textFormat: Text.PlainText // names and errors come from servers and logs
                     color: hist.skin.ink2
                     font.pixelSize: 11
                     elide: Text.ElideRight

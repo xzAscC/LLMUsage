@@ -109,6 +109,7 @@ Rectangle {
             }
             StyledText {
                 text: card.title
+                textFormat: Text.PlainText // names and errors come from servers and logs
                 color: card.skin.ink
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -125,6 +126,7 @@ Rectangle {
                     id: planText
                     anchors.centerIn: parent
                     text: card.plan.toUpperCase()
+                    textFormat: Text.PlainText // names and errors come from servers and logs
                     color: card.skin.bg2
                     font.pixelSize: 10
                     font.weight: Font.Bold
@@ -191,6 +193,7 @@ Rectangle {
                         }
                         StyledText {
                             text: modelData.text
+                            textFormat: Text.PlainText // names and errors come from servers and logs
                             color: modelData.tone ? card.skin[modelData.tone] : card.skin.ink2
                             font.pixelSize: 11
                         }
@@ -213,6 +216,7 @@ Rectangle {
                 anchors.fill: parent
                 anchors.margins: 7
                 text: card.provider.error || "Couldn't read usage."
+                textFormat: Text.PlainText // names and errors come from servers and logs
                 color: card.skin.ink2
                 font.pixelSize: 11
                 wrapMode: Text.Wrap

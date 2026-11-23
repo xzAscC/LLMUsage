@@ -38,6 +38,7 @@ ColumnLayout {
         Layout.fillWidth: true
         StyledText {
             text: (meter.win.label || "").trim()
+            textFormat: Text.PlainText // names and errors come from servers and logs
             color: meter.skin.ink2
             font.pixelSize: 12
         }

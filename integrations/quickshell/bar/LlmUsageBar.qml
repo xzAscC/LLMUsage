@@ -457,6 +457,7 @@ MouseArea {
                     StyledText {
                         visible: !root.showHistory && !root.ready
                         text: root.lastError || "Loading…"
+                        textFormat: Text.PlainText // names and errors come from servers and logs
                         color: lu.faint
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
