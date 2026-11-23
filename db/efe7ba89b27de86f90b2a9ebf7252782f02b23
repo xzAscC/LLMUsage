@@ -1,0 +1,27 @@
+README.md
+  s_dcfd869ac9977a::t_22d93a561c397a 29,56
+src/credentials.test.ts
+  s_dcfd869ac9977a::t_283387dab204c8 21,154-163,165,169-170,175,178,182-183,187,308,310,313-314,320-356,405-413,415,419-433
+src/credentials.ts
+  s_dcfd869ac9977a::t_33974eba9dc154 1-2,20,96-106,136-138,173-208,210-213,216,221-222,243,266-267,370-372
+src/oauth-refresh.ts
+  s_dcfd869ac9977a::t_0073eb055326bd 6-7,117-118,125-128,133-152,154-156,238-239,241-242,247-249,251,253-258,265-269,279-281,283-285,306,309,329-330,332,334,362-363,368,370-379,381,409-410,436-447
+src/providers/antigravity.test.ts
+  s_dcfd869ac9977a::t_3e5f1d947b7334 9,175,183,201-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbefe7ba89b27de86f90b2a9ebf7252782f02b23",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "unknown"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
