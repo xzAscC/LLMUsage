@@ -32,7 +32,7 @@ No Electron. No cloud account. No global npm install. Just Bun + your existing l
 - **Stale, not blank** — when a refresh fails, the last good reading stays (dimmed, “as of 2h ago”) for up to 3 days
 - **Login end** — a Claude login ends on a fixed date that refreshing does not move; the card warns in the last 3 days (“Login expires in 2 days · run /login”), as Claude Code does
 - **History** — daily peak + mean per window, `llm-usage history` with sparklines / CSV
-- **Local token totals** — per-day tokens from Claude Code, Codex and pi session logs (`llm-usage tokens`)
+- **Local token totals** — tokens per day and per model from Claude Code, Codex and pi session logs (`llm-usage tokens`)
 - **Alerts** — fire once per threshold crossing (75/90/95), on exhaustion/reset, optionally on pace deficit
 - **`llm-usage doctor`** — which store each credential comes from, expiry, refresh ownership, live check, integration
 - **Tests**: `bun test` (credential stores are sandboxed; tests never touch your real logins)
@@ -128,7 +128,7 @@ Also set `projectRoot` (and `bunPath` if needed) near the top of `LlmUsageBar.qm
 | Left click | Open the popup (stays open while hovered; closes when the pointer leaves) |
 | Right click | Force refresh |
 
-The look follows [Headroom](https://github.com/BioInfo/headroom): a warm cream/espresso palette (light/dark follows ii's dark mode), a chef-hat gauge that fills bottom-up in the tier color, and one card per provider. Each card has a 20-segment olive→amber→terracotta→rust meter with an even-burn pace tick, "resets in … · 12% in reserve / empties ~21:40", plan chip, status dot, and a link to the provider's usage page (`llm-usage doctor` tells which store each login comes from). Cards of similar height share a row, so every row lines up; an unused window reads "not started". The header sums things up ("3 comfortable · 1 tight") and, when one plan runs hot, suggests the one with the most room. The chart button switches to **Usage History**: token tiles (yesterday / 7 / 30 days), a token trend per agent, and the recorded daily peak per window.
+The look follows [Headroom](https://github.com/BioInfo/headroom): a warm cream/espresso palette (light/dark follows ii's dark mode), a chef-hat gauge that fills bottom-up in the tier color, and one card per provider. Each card has a 20-segment olive→amber→terracotta→rust meter with an even-burn pace tick, "resets in … · 12% in reserve / empties ~21:40", plan chip, status dot, and a link to the provider's usage page (`llm-usage doctor` tells which store each login comes from). Cards of similar height share a row, so every row lines up; an unused window reads "not started". The header sums things up ("3 comfortable · 1 tight") and, when one plan runs hot, suggests the one with the most room. The chart button switches to **Usage History**: token tiles (yesterday / 7 / 30 days), a token trend per agent, tokens per model over the last 7 days, and the recorded daily peak per window.
 
 Components live next to the widget (`Lu*.qml`); Loader-only integration is unchanged.
 

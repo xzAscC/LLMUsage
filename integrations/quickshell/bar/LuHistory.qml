@@ -24,6 +24,18 @@ ColumnLayout {
         return tokenSeries.days.map((_, i) => names.reduce((a, n) => a + (tokenSeries.sources[n] ? tokenSeries.sources[n][i] : 0), 0))
     }
 
+    // tokens per model over the last 7 days, for the agent picked in the trend
+    readonly property var modelRows: {
+        if (!tokenSeries || !tokenSeries.models) return []
+        const n = tokenSeries.days.length
+        return tokenSeries.models
+            .filter(m => source === "All" || m.source === source)
+            .map(m => ({ label: m.label, total: m.days.slice(Math.max(0, n - 7)).reduce((a, b) => a + b, 0) }))
+            .filter(m => m.total > 0)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 6)
+    }
+
     function sumLast(n, skipToday) {
         const v = values
         const end = skipToday ? v.length - 1 : v.length
@@ -209,6 +221,46 @@ ColumnLayout {
                 ctx.strokeStyle = sk.pressing
                 ctx.lineWidth = 2
                 ctx.stroke()
+            }
+        }
+    }
+
+    Panel {
+        title: "By model · last 7 days"
+        visible: hist.modelRows.length > 0
+
+        Repeater {
+            model: hist.modelRows
+            delegate: RowLayout {
+                required property var modelData
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    text: modelData.label
+                    color: hist.skin.ink2
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    Layout.preferredWidth: 130
+                }
+                Item {
+                    Layout.fillWidth: true
+                    implicitHeight: 10
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: 8
+                        radius: 4
+                        width: Math.max(3, parent.width * modelData.total / hist.modelRows[0].total)
+                        color: hist.skin.clay
+                    }
+                }
+                StyledText {
+                    text: hist.skin.tokens(modelData.total)
+                    color: hist.skin.ink2
+                    font.pixelSize: 11
+                    font.family: Appearance.font.family.numbers
+                    Layout.preferredWidth: 44
+                    horizontalAlignment: Text.AlignRight
+                }
             }
         }
     }

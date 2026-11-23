@@ -5,7 +5,7 @@ import { loadConfig } from "./config.ts";
 import { runDoctor } from "./doctor.ts";
 import { formatHuman, formatWaybar } from "./format.ts";
 import { formatHistory, historyCsv, loadHistory, seriesFor } from "./history.ts";
-import { cachedTokenSeries, formatTokens, scanTokens, tokensCsv } from "./tokens.ts";
+import { cachedTokenSeries, formatTokens, scanTokens, tokensCsv, type ModelDays } from "./tokens.ts";
 import type { UsageSnapshot } from "./types.ts";
 
 const args = process.argv.slice(2);
@@ -95,8 +95,9 @@ async function main() {
         process.stdout.write(JSON.stringify(series) + "\n");
         break;
       }
-      const data = scanTokens(days);
-      process.stdout.write(args.includes("--csv") ? tokensCsv(data) : formatTokens(data, days));
+      const models: ModelDays = {};
+      const data = scanTokens(days, Date.now(), models);
+      process.stdout.write(args.includes("--csv") ? tokensCsv(data) : formatTokens(data, days, Date.now(), models));
       break;
     }
     case "doctor":
