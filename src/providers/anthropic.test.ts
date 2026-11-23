@@ -52,7 +52,7 @@ describe("fetchAnthropic", () => {
           seven_day_opus: null,
         }),
         { status: 200 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(true);
@@ -93,7 +93,7 @@ describe("fetchAnthropic", () => {
           ],
         }),
         { status: 200 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(true);
@@ -115,7 +115,7 @@ describe("fetchAnthropic", () => {
           error: { type: "rate_limit_error", message: "Rate limited" },
         }),
         { status: 429 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
     const r = await fetchAnthropic({});
     expect(r.ok).toBe(false);
