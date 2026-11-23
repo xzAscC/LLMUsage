@@ -1,0 +1,25 @@
+README.md
+  s_dcfd869ac9977a::t_abe3371b8dd92b 131
+integrations/quickshell/bar/LlmUsageBar.qml
+  s_dcfd869ac9977a::t_95f3703bcd5437 88-109,438,446
+integrations/quickshell/bar/LuCard.qml
+  s_dcfd869ac9977a::t_3f83803d960ff9 222,226
+integrations/quickshell/bar/LuMeter.qml
+  s_dcfd869ac9977a::t_066e783266f9b0 87-90,92,94-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "342f8b9ae46bd9f5286e191dd27f1bd87518b978",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
