@@ -3,6 +3,8 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  lstatSync,
+  rmdirSync,
   rmSync,
   statSync,
   utimesSync,
@@ -112,35 +114,49 @@ export function xaiRefresher(clientId = XAI_OPENCODE_CLIENT_ID) {
 /**
  * Google's Antigravity desktop OAuth client, which made pi's login. It is a
  * public installed-app client, but it is not stored in this repo: it comes
- * from $ANTIGRAVITY_CLIENT_ID/$ANTIGRAVITY_CLIENT_SECRET, else from the
- * pi-antigravity extension installed in pi.
+ * from $ANTIGRAVITY_CLIENT_ID/$ANTIGRAVITY_CLIENT_SECRET, else it is read
+ * (as text, never run) from the pi-antigravity extension installed in pi.
  */
 export async function antigravityClient(): Promise<{ id: string; secret: string }> {
   const id = process.env.ANTIGRAVITY_CLIENT_ID;
   const secret = process.env.ANTIGRAVITY_CLIENT_SECRET;
   if (id && secret) return { id, secret };
   const path = join(piAgentDir(), "npm", "node_modules", "pi-antigravity", "src", "auth", "oauth.ts");
-  if (!existsSync(path)) {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
     throw new Error(
       "Antigravity OAuth client not found: install pi-antigravity in pi, or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
     );
   }
-  let m: Record<string, unknown>;
-  try {
-    m = await import(path);
-  } catch (err) {
-    throw new Error(`Antigravity OAuth client: pi-antigravity failed to load (${shortReason(err)})`);
-  }
-  if (typeof m.CLIENT_ID === "string" && m.CLIENT_ID && typeof m.CLIENT_SECRET === "string" && m.CLIENT_SECRET) {
-    return { id: m.CLIENT_ID, secret: m.CLIENT_SECRET };
-  }
-  throw new Error("Antigravity OAuth client: pi-antigravity no longer exports CLIENT_ID/CLIENT_SECRET");
+  const client = { id: piConstant(text, "CLIENT_ID"), secret: piConstant(text, "CLIENT_SECRET") };
+  if (client.id && client.secret) return client as { id: string; secret: string };
+  throw new Error(
+    "Antigravity OAuth client: could not read CLIENT_ID/CLIENT_SECRET from pi-antigravity; set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET",
+  );
 }
 
-function shortReason(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
+/**
+ * `export const NAME = env("NAME") || atob("ab" + "cd");` → atob("abcd"), or a
+ * plain string literal. Reading the text keeps a third-party package's code
+ * out of the process that holds every agent's tokens.
+ */
+export function piConstant(text: string, name: string): string | null {
+  const m = new RegExp(`export const ${name}\\s*=([^;]*);`).exec(text);
+  if (!m) return null;
+  const expr = m[1]!;
+  const at = expr.indexOf("atob(");
+  const part = at >= 0 ? expr.slice(at + 5) : expr.slice(expr.lastIndexOf("||") + 1);
+  const literal = [...part.matchAll(/"([^"\\]*)"|'([^'\\]*)'/g)].map((x) => x[1] ?? x[2]).join("");
+  if (!literal) return null;
+  try {
+    return at >= 0 ? atob(literal) : literal;
+  } catch {
+    return null;
+  }
 }
+
 
 export async function googleRefresher(
   oauth: OAuthCredential,
@@ -219,23 +235,38 @@ function delay(ms: number): Promise<void> {
 
 /** Lock directories this process holds, removed on SIGTERM/SIGINT/SIGHUP too. */
 const heldLocks = new Set<string>();
+/** Locked actions still running (a refresh waiting on the server). */
+const running = new Set<Promise<unknown>>();
 let cleanupInstalled = false;
+/** How long a signal waits for a running refresh; as long as its own budget. */
+const SIGNAL_GRACE_MS = 30_000;
 
 function installLockCleanup(): void {
   if (cleanupInstalled) return;
   cleanupInstalled = true;
-  // A killed collector must not leave Claude Code's refresh locks behind:
-  // its sessions could not refresh until the lock goes stale (60 s).
+  // A killed collector must not leave Claude Code's refresh locks behind (its
+  // sessions could not refresh until the lock goes stale, 60 s), nor drop a
+  // token the server has just rotated: let a running refresh write it first.
   const codes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
+  let exiting = false;
   for (const [sig, code] of Object.entries(codes)) {
-    process.on(sig, () => {
+    process.on(sig, async () => {
+      if (exiting) return;
+      exiting = true;
+      if (running.size) {
+        await Promise.race([Promise.allSettled([...running]), delay(SIGNAL_GRACE_MS)]);
+      }
       for (const p of heldLocks) rmSync(p, { recursive: true, force: true });
       process.exit(code);
     });
   }
 }
 
-/** mkdir the lock once; break it only when nobody has touched it for REFRESH_LOCK_STALE_MS. */
+/**
+ * mkdir the lock once. Break it only when it is an empty directory nobody has
+ * touched for REFRESH_LOCK_STALE_MS, and only with rmdir: a file or a full
+ * directory at a lock path is not ours to delete, so it counts as busy.
+ */
 function tryLock(lockPath: string): boolean {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -245,10 +276,13 @@ function tryLock(lockPath: string): boolean {
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
       try {
-        if (Date.now() - statSync(lockPath).mtimeMs <= REFRESH_LOCK_STALE_MS) return false;
-        rmSync(lockPath, { recursive: true, force: true });
+        const st = lstatSync(lockPath);
+        if (!st.isDirectory() || Date.now() - st.mtimeMs <= REFRESH_LOCK_STALE_MS) return false;
+        rmdirSync(lockPath);
       } catch (statError) {
-        if (errorCode(statError) !== "ENOENT") throw statError;
+        const code = errorCode(statError);
+        if (code === "ENOTEMPTY" || code === "EEXIST" || code === "ENOTDIR") return false;
+        if (code !== "ENOENT") throw statError;
       }
     }
   }
@@ -269,9 +303,10 @@ export async function withFileLocks<T>(
   lockPaths: string[],
   label: string,
   action: () => Promise<T>,
+  timeoutMs = REFRESH_LOCK_TIMEOUT_MS,
 ): Promise<T> {
   installLockCleanup();
-  const deadline = Date.now() + REFRESH_LOCK_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   while (true) {
     const held: string[] = [];
     try {
@@ -291,9 +326,12 @@ export async function withFileLocks<T>(
             }
           }
         }, lockTiming.beatMs);
+        const job = action();
+        running.add(job);
         try {
-          return await action();
+          return await job;
         } finally {
+          running.delete(job);
           clearInterval(beat);
         }
       }
@@ -321,20 +359,26 @@ export function lockPathFor(credPath: string, key: string): string {
 
 /**
  * Read the file again after a refresh. A file caught half-written by another
- * writer reads as null for a moment: retry. "gone" = really deleted (logout);
- * null = still unreadable after a second.
+ * writer does not parse for a moment: retry. "gone" = the file or its login
+ * was removed (a logout); "unreadable" = it still does not parse.
  */
 async function readSettled(
   read: () => OAuthCredential | null,
   path?: string,
-): Promise<OAuthCredential | "gone" | null> {
+): Promise<OAuthCredential | "gone" | "unreadable"> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const current = read();
-    if (current) return current;
-    if (path && !existsSync(path)) return "gone";
-    await delay(100);
+    if (path) {
+      if (!existsSync(path)) return "gone";
+      try {
+        JSON.parse(readFileSync(path, "utf8"));
+      } catch {
+        await delay(100);
+        continue;
+      }
+    }
+    return read() ?? "gone";
   }
-  return null;
+  return "unreadable";
 }
 
 async function recoverRotated(
@@ -362,6 +406,8 @@ export async function refreshFileCredential(opts: {
   lockPath: string | string[];
   /** the credentials file, to tell a deleted file from a half-written one */
   path?: string;
+  /** the owner's lock for read-modify-write of the file (Claude Code's storage lock) */
+  writeLock?: string;
   label: string;
   refresh: OAuthRefresher;
   force?: boolean;
@@ -387,14 +433,18 @@ export async function refreshFileCredential(opts: {
       }
       throw err;
     }
-    // A /login or /logout while we waited on the server wins: never write the
-    // old login's tokens over it. But a file that stays unreadable gets ours:
-    // the server has rotated the login, and `next` is its only copy.
-    const now = await readSettled(read, opts.path);
-    if (now === "gone") return null;
-    if (now && credentialsChanged(latest, now)) return now;
-    write(next);
-    return next;
+    // Write only over the same login, as the owner writes: a /login or
+    // /logout while we waited on the server wins, and a file that never
+    // parses is not ours to overwrite (we keep `next` for this call only).
+    const finish = async (): Promise<OAuthCredential | null> => {
+      const now = await readSettled(read, opts.path);
+      if (now === "gone") return null;
+      if (now === "unreadable") return next;
+      if (credentialsChanged(latest, now)) return now;
+      write(next);
+      return next;
+    };
+    return opts.writeLock ? withFileLocks([opts.writeLock], opts.label, finish) : finish();
   });
 }
 

@@ -6,7 +6,7 @@ import { fetchAntigravity, windowsFromSummary } from "./antigravity.ts";
 import type { AuthFile } from "../auth.ts";
 import { antigravitySources, authFileSource } from "../credentials.ts";
 import { setRunningProcesses } from "../procs.ts";
-import { antigravityClient } from "../oauth-refresh.ts";
+import { antigravityClient, piConstant } from "../oauth-refresh.ts";
 
 const originalFetch = globalThis.fetch;
 const tempDirs: string[] = [];
@@ -172,7 +172,7 @@ describe("antigravityClient", () => {
     expect(await antigravityClient()).toEqual({ id: "env-id", secret: "env-secret" });
   });
 
-  test("a pi-antigravity that fails to load says so, not 'install it'", async () => {
+  test("a pi-antigravity whose client cannot be read says so, not 'install it'", async () => {
     const piDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "llm-usage-bad-pi-"));
     tempDirs.push(process.env.PI_CODING_AGENT_DIR);
@@ -180,7 +180,7 @@ describe("antigravityClient", () => {
     mkdirSync(join(bad, ".."), { recursive: true });
     writeFileSync(bad, 'import "./missing-module.js";\nexport const CLIENT_ID = "x";\n');
     try {
-      await expect(antigravityClient()).rejects.toThrow(/failed to load/);
+      await expect(antigravityClient()).rejects.toThrow(/could not read CLIENT_ID\/CLIENT_SECRET/);
     } finally {
       process.env.PI_CODING_AGENT_DIR = piDir;
     }
@@ -196,5 +196,27 @@ describe("antigravityClient", () => {
     } finally {
       process.env.PI_CODING_AGENT_DIR = piDir;
     }
+  });
+});
+
+describe("piConstant", () => {
+  test("reads pi-antigravity's constants as text, never runs them", () => {
+    const b64 = (x: string) => Buffer.from(x).toString("base64");
+    const id = b64("fake-client-id");
+    const text = [
+      'import { antigravityEnv } from "../utils/util.js";',
+      "export const CLIENT_ID =",
+      '  antigravityEnv("CLIENT_ID") ||',
+      "  atob(",
+      `    "${id.slice(0, 8)}" +`,
+      `      "${id.slice(8)}",`,
+      "  );",
+      `export const CLIENT_SECRET = antigravityEnv("CLIENT_SECRET") || atob('${b64("fake-secret")}');`,
+      'export const PLAIN = "plain-value";',
+    ].join("\n");
+    expect(piConstant(text, "CLIENT_ID")).toBe("fake-client-id");
+    expect(piConstant(text, "CLIENT_SECRET")).toBe("fake-secret");
+    expect(piConstant(text, "PLAIN")).toBe("plain-value");
+    expect(piConstant(text, "MISSING")).toBeNull();
   });
 });

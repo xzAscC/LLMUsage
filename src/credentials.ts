@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
   type AuthFile,
@@ -16,6 +17,7 @@ import {
   type OAuthRefresher,
 } from "./oauth-refresh.ts";
 import {
+  cacheDir,
   claudeCredentialsPath,
   codexAuthPath,
   grokAuthPath,
@@ -91,6 +93,17 @@ function atomicWriteJson(path: string, data: unknown): void {
   }
 }
 
+/**
+ * The file to update in place. A file that exists but does not parse is
+ * someone else's, mid-write or broken: refuse rather than write over it.
+ */
+function readJsonForUpdate(path: string): Record<string, any> {
+  if (!existsSync(path)) return {};
+  const data = readJson(path);
+  if (!data) throw new Error(`${path} does not parse; not writing over it`);
+  return data;
+}
+
 function readJson(path: string): Record<string, any> | null {
   if (!existsSync(path)) return null;
   try {
@@ -120,8 +133,9 @@ function readClaudeCode(path: string): { cred: OAuthCredential; plan?: string } 
 }
 
 function writeClaudeCode(path: string, next: OAuthCredential): void {
-  const data = readJson(path) || {};
-  const prev = data.claudeAiOauth || {};
+  const data = readJsonForUpdate(path);
+  const prev = data.claudeAiOauth;
+  if (!prev) throw new Error("Claude login was removed; not writing it back");
   data.claudeAiOauth = {
     ...prev,
     accessToken: next.access,
@@ -156,18 +170,56 @@ export function claudeCodeLockPaths(credPath: string): string[] {
  */
 const CLAUDE_SHARED_LOCK_SINCE = [2, 1, 328] as const;
 
+/** Lock files the protocol depends on; a build whose binary lacks them is not trusted with it. */
+const CLAUDE_LOCK_MARKERS = [".oauth_refresh.lock", ".storage-write.lock"];
+
 /**
- * Every running `claude` is a native Claude Code build (…/versions/X.Y.Z)
- * at least CLAUDE_SHARED_LOCK_SINCE. Anything else (an older build, an npm
- * install, an unreadable process) and we wait for it to refresh, as before.
+ * Does this Claude Code binary still name the locks we take? A build that
+ * renamed them would not see ours. Checked once per binary (grep stops at
+ * the first hit) and remembered in the cache dir by path, size and mtime.
+ */
+function buildNamesLocks(exe: string): boolean {
+  let key: string;
+  try {
+    const st = statSync(exe);
+    key = `${exe}|${st.size}|${st.mtimeMs}`;
+  } catch {
+    return false;
+  }
+  const file = join(cacheDir(), "claude-builds.json");
+  let known: Record<string, boolean> = {};
+  try {
+    known = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    // first check
+  }
+  if (typeof known[key] === "boolean") return known[key]!;
+  const ok = CLAUDE_LOCK_MARKERS.every(
+    (m) => spawnSync("grep", ["-q", "-a", "-F", "--", m, exe], { stdio: "ignore" }).status === 0,
+  );
+  try {
+    mkdirSync(cacheDir(), { recursive: true });
+    writeFileSync(file, JSON.stringify({ ...known, [key]: ok }));
+  } catch {
+    // best effort
+  }
+  return ok;
+}
+
+/**
+ * Every running `claude` is a native Claude Code build (…/versions/X.Y.Z),
+ * at least CLAUDE_SHARED_LOCK_SINCE, whose binary still names the locks.
+ * Anything else (an older or changed build, an npm install, a process we
+ * cannot read) and we wait for it to refresh, as before.
  */
 export function claudeSharesLock(exes = runningExes("claude")): boolean {
-  return exes.every((exe) => {
+  return [...new Set(exes)].every((exe) => {
     const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(basename(exe));
     if (!m) return false;
     const v = m.slice(1).map(Number);
     const floor = CLAUDE_SHARED_LOCK_SINCE;
-    return v[0] !== floor[0] ? v[0]! > floor[0] : v[1] !== floor[1] ? v[1]! > floor[1] : v[2]! >= floor[2];
+    const recent = v[0] !== floor[0] ? v[0]! > floor[0] : v[1] !== floor[1] ? v[1]! > floor[1] : v[2]! >= floor[2];
+    return recent && buildNamesLocks(exe);
   });
 }
 
@@ -188,6 +240,7 @@ export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | 
         write: (c) => writeClaudeCode(path, c),
         lockPath: claudeCodeLockPaths(path),
         path,
+        writeLock: join(dirname(path), ".storage-write.lock"),
         label: "Claude Code",
         refresh: refresher,
         force,
@@ -210,7 +263,8 @@ function readCodex(path: string): OAuthCredential | null {
 }
 
 function writeCodex(path: string, next: OAuthCredential): void {
-  const data = readJson(path) || {};
+  const data = readJsonForUpdate(path);
+  if (!data.tokens) throw new Error("Codex login was removed; not writing it back");
   data.tokens = {
     ...(data.tokens || {}),
     access_token: next.access,
@@ -313,8 +367,9 @@ export function grokCliSource(path = grokAuthPath()): OAuthSource | null {
         requested: found.cred,
         read: () => readGrokCli(path)?.cred ?? null,
         write: (c) => {
-          const data = readJson(path) || {};
-          const entry = data[found.dictKey] || {};
+          const data = readJsonForUpdate(path);
+          const entry = data[found.dictKey];
+          if (!entry) throw new Error("Grok CLI login was removed; not writing it back");
           entry.key = c.access;
           if (c.refresh) entry.refresh_token = c.refresh;
           if (c.expires) entry.expires_at = new Date(c.expires).toISOString();
