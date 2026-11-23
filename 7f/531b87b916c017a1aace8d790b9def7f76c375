@@ -1,0 +1,45 @@
+README.md
+  s_dcfd869ac9977a::t_c782822fcd5eb8 33,42,54-56
+integrations/quickshell/bar/LuCard.qml
+  s_dcfd869ac9977a::t_e6283a9fbc0551 47-48,52-60,190,194
+src/auth.ts
+  s_dcfd869ac9977a::t_5de393fe792a76 10-13
+src/collect.test.ts
+  s_dcfd869ac9977a::t_ade624d94e1c8b 36-43
+src/collect.ts
+  s_dcfd869ac9977a::t_0035feead24a7d 81-82
+src/credentials.test.ts
+  s_dcfd869ac9977a::t_8e6bafada74f35 2,8,10-11,15,130-327
+src/credentials.ts
+  s_dcfd869ac9977a::t_b9c0633d12b7c8 1,63-67,109-110,124-125,130-146,156,162,325-333,335,343,351,360,441-446,448-453,471-474,483,492-496
+src/doctor.ts
+  s_dcfd869ac9977a::t_3e9110964d6d00 11,30,32-33,35,38,41-44,57
+src/format.test.ts
+  s_dcfd869ac9977a::t_9a3b274e740e82 2,100-111
+src/format.ts
+  s_dcfd869ac9977a::t_c41ffe52196ec0 14-25,33,37,49
+src/oauth-refresh.ts
+  s_dcfd869ac9977a::t_40aec4371e8455 193-195,197-213,216-217,221-222,224,228-229,231-262,266-273,299-300,306-307,326-329
+src/providers/anthropic.test.ts
+  s_dcfd869ac9977a::t_13bf34c0c84436 2,149-185
+src/providers/anthropic.ts
+  s_dcfd869ac9977a::t_98dbe3a781a47d 20-24,62-63,71-72,77,79,83,89-93,238-245,247,253
+src/types.ts
+  s_dcfd869ac9977a::t_8dda446f98504c 62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f531b87b916c017a1aace8d790b9def7f76c375",
+  "prompts": {},
+  "sessions": {
+    "s_dcfd869ac9977a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63fde522-3a5e-4607-b9e6-f3cce8d97a1b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "xzascc <xudongzhu3944@gmail.com>"
+    }
+  }
+}
