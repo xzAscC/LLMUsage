@@ -16,6 +16,8 @@ import {
   zaiKeys,
 } from "./credentials.ts";
 import { setRunningProcesses } from "./procs.ts";
+import { lockTiming, withFileLocks } from "./oauth-refresh.ts";
+import { statSync } from "node:fs";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -252,6 +254,45 @@ describe("Claude Code credentials", () => {
     const { result } = await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access);
     expect(result).toBe("B");
     expect(read().claudeAiOauth).toMatchObject({ accessToken: "B", subscriptionType: "max" });
+  });
+
+  test("a file left half-written by another writer still gets our rotated token", async () => {
+    const { path, read } = claudeDir(ccExpired("A"));
+    setRunningProcesses(["claude"]);
+    const refresher = async () => {
+      writeFileSync(path, '{"claudeAiOauth": {'); // someone else's write, cut short
+      return fresh("A2");
+    };
+    const { result } = await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access);
+    expect(result).toBe("A2");
+    expect(read().claudeAiOauth.accessToken).toBe("A2");
+  });
+
+  test("a logout during our refresh stays a logout", async () => {
+    const { path } = claudeDir(ccExpired("A"));
+    setRunningProcesses(["claude"]);
+    const refresher = async () => {
+      rmSync(path);
+      return fresh("A2");
+    };
+    await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access).catch(() => null);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("held locks are touched while we wait on the server", async () => {
+    const lock = join(tmp(), ".oauth_refresh.lock");
+    const saved = lockTiming.beatMs;
+    lockTiming.beatMs = 50;
+    try {
+      await withFileLocks([lock], "test", async () => {
+        const first = statSync(lock).mtimeMs;
+        await new Promise((r) => setTimeout(r, 200));
+        expect(statSync(lock).mtimeMs).toBeGreaterThan(first);
+      });
+    } finally {
+      lockTiming.beatMs = saved;
+    }
+    expect(existsSync(lock)).toBe(false);
   });
 
   test("a 401 on an unexpired token does not rotate the login of a running session", async () => {

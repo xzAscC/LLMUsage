@@ -160,6 +160,7 @@ export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | 
         read: () => readClaudeCode(path)?.cred ?? null,
         write: (c) => writeClaudeCode(path, c),
         lockPath: claudeCodeLockPaths(path),
+        path,
         label: "Claude Code",
         refresh: refresher,
         force,
@@ -206,6 +207,7 @@ export function codexSource(path = codexAuthPath()): OAuthSource | null {
         read: () => readCodex(path),
         write: (c) => writeCodex(path, c),
         lockPath: lockPathFor(path, "codex"),
+        path,
         label: "Codex",
         refresh: refresher,
         force,
@@ -238,6 +240,7 @@ export function authFileSource(
           auth[key] = c;
         },
         lockPath: lockPathFor(path, key),
+        path,
         label: `${OWNER_LABEL[owner]} ${key}`,
         refresh: refresher,
         force,
@@ -292,6 +295,7 @@ export function grokCliSource(path = grokAuthPath()): OAuthSource | null {
           atomicWriteJson(path, data);
         },
         lockPath: lockPathFor(path, "grok"),
+        path,
         label: "Grok CLI",
         refresh: refresher,
         force,

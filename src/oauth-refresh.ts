@@ -1,9 +1,11 @@
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "fs";
 import { basename, dirname, join } from "path";
@@ -27,8 +29,11 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const SKEW_MS = 120_000;
 const REFRESH_LOCK_POLL_MS = 25;
-const REFRESH_LOCK_TIMEOUT_MS = 20_000;
+/** Longer than a holder's own refresh budget (30 s), so we outwait a slow one. */
+const REFRESH_LOCK_TIMEOUT_MS = 40_000;
 const REFRESH_LOCK_STALE_MS = 120_000;
+/** Touch held locks this often, as Claude Code does (proper-lockfile `update`); tests shorten it. */
+export const lockTiming = { beatMs: 5_000 };
 
 interface TokenResponse {
   access_token?: string;
@@ -265,7 +270,24 @@ export async function withFileLocks<T>(
         if (!tryLock(p)) break;
         held.push(p);
       }
-      if (held.length === lockPaths.length) return await action();
+      if (held.length === lockPaths.length) {
+        // keep the locks fresh so no one takes them for stale while we wait on the server
+        const beat = setInterval(() => {
+          const now = new Date();
+          for (const p of held) {
+            try {
+              utimesSync(p, now, now);
+            } catch {
+              // gone: the finally below cleans up anyway
+            }
+          }
+        }, lockTiming.beatMs);
+        try {
+          return await action();
+        } finally {
+          clearInterval(beat);
+        }
+      }
     } finally {
       for (const p of held.reverse()) unlock(p);
     }
@@ -286,6 +308,24 @@ export async function withFileLock<T>(
 
 export function lockPathFor(credPath: string, key: string): string {
   return join(dirname(credPath), `.${basename(credPath)}.${key}.llm-usage.lock`);
+}
+
+/**
+ * Read the file again after a refresh. A file caught half-written by another
+ * writer reads as null for a moment: retry. "gone" = really deleted (logout);
+ * null = still unreadable after a second.
+ */
+async function readSettled(
+  read: () => OAuthCredential | null,
+  path?: string,
+): Promise<OAuthCredential | "gone" | null> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const current = read();
+    if (current) return current;
+    if (path && !existsSync(path)) return "gone";
+    await delay(100);
+  }
+  return null;
 }
 
 async function recoverRotated(
@@ -311,6 +351,8 @@ export async function refreshFileCredential(opts: {
   write: (next: OAuthCredential) => void;
   /** one lock, or several taken in order (Claude Code uses two) */
   lockPath: string | string[];
+  /** the credentials file, to tell a deleted file from a half-written one */
+  path?: string;
   label: string;
   refresh: OAuthRefresher;
   force?: boolean;
@@ -337,9 +379,11 @@ export async function refreshFileCredential(opts: {
       throw err;
     }
     // A /login or /logout while we waited on the server wins: never write the
-    // old login's tokens over it.
-    const now = read();
-    if (!now || credentialsChanged(latest, now)) return now;
+    // old login's tokens over it. But a file that stays unreadable gets ours:
+    // the server has rotated the login, and `next` is its only copy.
+    const now = await readSettled(read, opts.path);
+    if (now === "gone") return null;
+    if (now && credentialsChanged(latest, now)) return now;
     write(next);
     return next;
   });
@@ -362,6 +406,7 @@ export async function ensureFreshOAuth(
     read: () => getOAuth(loadAuth(authPath), providerKeys),
     write: (cred) => persistOAuthProvider(persistKey, cred, authPath),
     lockPath: lockPathFor(authPath, persistKey),
+    path: authPath,
     label: persistKey,
     refresh,
     force,
