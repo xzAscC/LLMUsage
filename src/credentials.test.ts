@@ -9,9 +9,9 @@ import {
   callWithOAuth,
   claudeCodeLockPaths,
   claudeCodeSource,
-  claudeSharesLock,
   codexSource,
   CredentialError,
+  isWaitingNote,
   loadStores,
   openaiSources,
   zaiKeys,
@@ -92,7 +92,7 @@ describe("callWithOAuth", () => {
       throw new Error("HTTP 401");
     }).catch((e) => e);
     expect(err).toBeInstanceOf(CredentialError);
-    expect(String(err.message)).toMatch(/pi is running/);
+    expect(String(err.message)).toBe("Updates on your next pi message");
   });
 });
 
@@ -151,63 +151,14 @@ const ccExpired = (access: string) => ({
   accountUuid: "acct",
 });
 
-/** a stand-in for the installer's versions/<X.Y.Z> binary; `locks` = it names the locks we take */
-function claudeBuild(version: string, locks = true): string {
-  const dir = join(tmp(), "versions");
-  mkdirSync(dir, { recursive: true });
-  const exe = join(dir, version);
-  writeFileSync(exe, locks ? "\0.oauth_refresh.lock\0.storage-write.lock\0" : "\0nothing here\0");
-  return exe;
-}
-
-/** a native Claude Code build is running */
-function claudeRunning(version = "2.1.330") {
-  setRunningProcesses(["claude"], { claude: [claudeBuild(version)] });
-}
-
-describe("which Claude Code builds share the refresh lock", () => {
-  test("native builds from 2.1.328 whose binary still names the locks", () => {
-    const v = (x: string) => claudeBuild(x);
-    expect(claudeSharesLock([v("2.1.330")])).toBe(true);
-    expect(claudeSharesLock([v("2.1.328"), v("2.2.0"), v("3.0.0")])).toBe(true);
-    expect(claudeSharesLock([v("2.1.327")])).toBe(false);
-    expect(claudeSharesLock([v("2.1.330"), v("2.0.99")])).toBe(false);
-    expect(claudeSharesLock([claudeBuild("2.2.1", false)])).toBe(false); // renamed its locks
-    expect(claudeSharesLock(["/usr/bin/node"])).toBe(false);
-    expect(claudeSharesLock([""])).toBe(false);
-    expect(claudeSharesLock(["/no/such/versions/2.1.330"])).toBe(false);
-  });
-
-  for (const [what, exe] of [
-    ["an older build", () => claudeBuild("2.1.200")],
-    ["an npm install", () => "/usr/bin/node"],
-  ] as const) {
-    test(`while ${what} runs, we wait for it to refresh, as before`, async () => {
-      const { path } = claudeDir(ccExpired("A"));
-      setRunningProcesses(["claude"], { claude: [exe()] });
-      let refreshed = false;
-      await callWithOAuth(
-        [claudeCodeSource(path)!],
-        () => async () => {
-          refreshed = true;
-          return fresh("A2");
-        },
-        async (c) => c.access,
-      );
-      expect(refreshed).toBe(false);
-    });
-  }
-});
-
 describe("Claude Code credentials", () => {
   test("lock paths are Claude Code's own: <dir>/.oauth_refresh.lock, then <dir>.lock", () => {
     const { dir, path } = claudeDir(ccExpired("A"));
     expect(claudeCodeLockPaths(path)).toEqual([join(dir, ".oauth_refresh.lock"), `${dir}.lock`]);
   });
 
-  test("refreshes while claude runs, keeps every other field, releases both locks", async () => {
+  test("refreshes under Claude Code's locks, keeps every other field, releases both locks", async () => {
     const { dir, path, read } = claudeDir(ccExpired("A"));
-    claudeRunning();
     let seen: OAuthCredential | null = null;
     const refresher = async (c: OAuthCredential) => {
       seen = c;
@@ -238,8 +189,7 @@ describe("Claude Code credentials", () => {
       const { dir, path } = claudeDir(ccExpired("A"));
       const lock = which === "new" ? join(dir, ".oauth_refresh.lock") : `${dir}.lock`;
       mkdirSync(lock); // a Claude Code session is refreshing right now
-      claudeRunning();
-      let refreshed = false;
+        let refreshed = false;
       const pending = callWithOAuth(
         [claudeCodeSource(path)!],
         () => async () => {
@@ -282,7 +232,6 @@ describe("Claude Code credentials", () => {
   test("never sits on Claude Code's first lock while its second is busy", async () => {
     const { dir, path } = claudeDir(ccExpired("A"));
     mkdirSync(`${dir}.lock`); // a legacy holder
-    claudeRunning();
     const pending = callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
     for (let i = 0; i < 5; i += 1) {
       await new Promise((r) => setTimeout(r, 30));
@@ -294,7 +243,6 @@ describe("Claude Code credentials", () => {
 
   test("a /login during our refresh wins over the tokens we got", async () => {
     const { path, read } = claudeDir(ccExpired("A"));
-    claudeRunning();
     const refresher = async () => {
       // the user signs in to another account while the server answers us
       writeFileSync(path, JSON.stringify({ claudeAiOauth: { ...ccExpired("B"), expiresAt: Date.now() + 3600_000, subscriptionType: "max" } }));
@@ -308,7 +256,6 @@ describe("Claude Code credentials", () => {
   test("a file caught half-written is read again, then gets our rotated token", async () => {
     const { path, read } = claudeDir(ccExpired("A"));
     const whole = readFileSync(path, "utf8");
-    claudeRunning();
     const refresher = async () => {
       writeFileSync(path, whole.slice(0, 20)); // another writer, mid-write
       setTimeout(() => writeFileSync(path, whole), 250); // … and done
@@ -322,7 +269,6 @@ describe("Claude Code credentials", () => {
 
   test("a file that never parses is not overwritten; the call still uses our token", async () => {
     const { path } = claudeDir(ccExpired("A"));
-    claudeRunning();
     const refresher = async () => {
       writeFileSync(path, '{"claudeAiOauth": {');
       return fresh("A2");
@@ -334,7 +280,6 @@ describe("Claude Code credentials", () => {
 
   test("a /logout that keeps the file (other entries remain) stays a logout", async () => {
     const { path, read } = claudeDir(ccExpired("A"));
-    claudeRunning();
     const refresher = async () => {
       writeFileSync(path, JSON.stringify({ mcpOAuth: { keep: true } }));
       return fresh("A2");
@@ -347,7 +292,6 @@ describe("Claude Code credentials", () => {
     const { dir, path, read } = claudeDir(ccExpired("A"));
     const storage = join(dir, ".storage-write.lock");
     mkdirSync(storage); // Claude Code is saving an MCP token right now
-    claudeRunning();
     const pending = callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
     await new Promise((r) => setTimeout(r, 150));
     expect(read().claudeAiOauth.accessToken).toBe("A"); // not written yet
@@ -358,7 +302,6 @@ describe("Claude Code credentials", () => {
 
   test("a logout during our refresh stays a logout", async () => {
     const { path } = claudeDir(ccExpired("A"));
-    claudeRunning();
     const refresher = async () => {
       rmSync(path);
       return fresh("A2");
@@ -383,9 +326,30 @@ describe("Claude Code credentials", () => {
     expect(existsSync(lock)).toBe(false);
   });
 
+  test("while claude runs, an expired token is left to it; the card says when it updates", async () => {
+    const { path, read } = claudeDir(ccExpired("A"));
+    setRunningProcesses(["claude"]);
+    let refreshed = false;
+    const err = await callWithOAuth(
+      [claudeCodeSource(path)!],
+      () => async () => {
+        refreshed = true;
+        return fresh("A2");
+      },
+      async () => {
+        throw new Error("HTTP 401: expired");
+      },
+    ).catch((e) => e);
+    expect(refreshed).toBe(false);
+    expect(err).toBeInstanceOf(CredentialError);
+    expect(err.message).toBe("Updates on your next Claude Code message");
+    expect(isWaitingNote(err.message)).toBe(true);
+    expect(read().claudeAiOauth.accessToken).toBe("A");
+  });
+
   test("a 401 on an unexpired token does not rotate the login of a running session", async () => {
     const { path, read } = claudeDir({ ...ccExpired("A"), expiresAt: Date.now() + 3600_000 });
-    claudeRunning();
+    setRunningProcesses(["claude"]);
     let refreshed = false;
     const err = await callWithOAuth(
       [claudeCodeSource(path)!],
@@ -426,13 +390,12 @@ await new Promise(() => setInterval(() => {}, 1000));`;
     mkdirSync(storage);
     const old = new Date(Date.now() - 20_000); // older than 15 s, younger than 120 s
     utimesSync(storage, old, old);
-    claudeRunning();
     const { result } = await callWithOAuth([claudeCodeSource(path)!], () => async () => fresh("A2"), async (c) => c.access);
     expect(result).toBe("A2");
     expect(read().claudeAiOauth.accessToken).toBe("A2");
   });
 
-  test("after SIGTERM no new refresh starts; the running one finishes; a second signal exits at once", async () => {
+  test("after SIGTERM no new refresh starts; the running one finishes; a later second Ctrl-C exits at once", async () => {
     const root = tmp();
     const [lockX, lockY, marks] = [join(root, "x.lock"), join(root, "y.lock"), join(root, "marks")];
     mkdirSync(lockY); // Y waits on a busy lock
@@ -453,28 +416,47 @@ setInterval(() => {}, 1000);`;
     expect(log).toContain("X done");
     expect(log).not.toContain("Y started");
 
-    // a second signal does not wait for the running action
+    // a second Ctrl-C a second later does not wait for the running action
     const slow = Bun.spawn(["bun", "-e", `import { withFileLocks } from ${lib};
 withFileLocks([${JSON.stringify(join(root, "z.lock"))}], "Z", () => new Promise((r) => setTimeout(r, 20000)));`], { stdout: "ignore", stderr: "ignore" });
     for (let i = 0; i < 100 && !existsSync(join(root, "z.lock")); i += 1) await new Promise((r) => setTimeout(r, 20));
     const t0 = Date.now();
     slow.kill("SIGINT");
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 1100));
     slow.kill("SIGINT");
     expect(await slow.exited).toBe(130);
     expect(Date.now() - t0).toBeLessThan(3000);
     expect(existsSync(join(root, "z.lock"))).toBe(false);
   });
 
-  test("a build we could not read is not remembered as 'no locks'", () => {
-    const exe = claudeBuild("2.1.331");
-    chmodSync(exe, 0o000);
+  test("two SIGHUPs at once (a closing terminal) still let the running refresh write", async () => {
+    const root = tmp();
+    const done = join(root, "done");
+    const lib = JSON.stringify(join(import.meta.dir, "oauth-refresh.ts"));
+    const child = Bun.spawn(["bun", "-e", `import { withFileLocks } from ${lib};
+import { writeFileSync } from "node:fs";
+withFileLocks([${JSON.stringify(join(root, "h.lock"))}], "H", async () => { await new Promise((r) => setTimeout(r, 500)); writeFileSync(${JSON.stringify(done)}, "written"); });
+setInterval(() => {}, 1000);`], { stdout: "ignore", stderr: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(join(root, "h.lock")); i += 1) await new Promise((r) => setTimeout(r, 20));
+    child.kill("SIGHUP");
+    child.kill("SIGHUP");
+    expect(await child.exited).toBe(129);
+    expect(readFileSync(done, "utf8")).toBe("written");
+  });
+
+  test("a failed write is reported, not swallowed", async () => {
+    const { dir, path } = claudeDir(ccExpired("A"));
+    const refresher = async () => {
+      chmodSync(dir, 0o500); // the config dir became read-only meanwhile
+      return fresh("A2");
+    };
     try {
-      expect(claudeSharesLock([exe])).toBe(false);
+      const err = await callWithOAuth([claudeCodeSource(path)!], () => refresher, async (c) => c.access).catch((e) => e);
+      expect(err).toBeInstanceOf(CredentialError);
+      expect(String(err.message)).toMatch(/refresh failed/);
     } finally {
-      chmodSync(exe, 0o644);
+      chmodSync(dir, 0o755);
     }
-    expect(claudeSharesLock([exe])).toBe(true);
   });
 
   test("a stale lock path that is a file or a full directory is never deleted", async () => {
@@ -484,7 +466,6 @@ withFileLocks([${JSON.stringify(join(root, "z.lock"))}], "Z", () => new Promise(
     writeFileSync(legacy, "not a lock");
     const old = new Date(Date.now() - 10 * 60_000);
     utimesSync(legacy, old, old);
-    claudeRunning();
     const err = await withFileLocks(claudeCodeLockPaths(path), "test", async () => "got it", { timeoutMs: 300 }).catch((e) => e);
     expect(String(err)).toMatch(/Timed out/);
     expect(readFileSync(legacy, "utf8")).toBe("not a lock");

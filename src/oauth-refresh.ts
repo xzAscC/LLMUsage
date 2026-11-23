@@ -232,6 +232,8 @@ function isRefreshReuseError(err: unknown): boolean {
   );
 }
 
+class LockTimeoutError extends Error {}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -252,16 +254,22 @@ function installLockCleanup(): void {
   // A killed collector must not leave Claude Code's refresh locks behind (its
   // sessions could not refresh until the lock goes stale, 60 s), nor drop a
   // token the server has just rotated: let a running refresh write it first.
-  // A second signal means "now".
+  // A second Ctrl-C or SIGTERM a second or more later means "now". SIGHUP
+  // never does: closing a terminal sends it twice in the same instant.
   const codes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
   const leave = (code: number) => {
     for (const p of heldLocks) rmSync(p, { recursive: true, force: true });
     process.exit(code);
   };
+  let firstAt = 0;
   for (const [sig, code] of Object.entries(codes)) {
     process.on(sig, async () => {
-      if (exiting) leave(code);
+      if (exiting) {
+        if (sig !== "SIGHUP" && Date.now() - firstAt >= 1000) leave(code);
+        return;
+      }
       exiting = true;
+      firstAt = Date.now();
       const deadline = Date.now() + SIGNAL_GRACE_MS;
       while (running.size && Date.now() < deadline) {
         await Promise.race([Promise.allSettled([...running]), delay(deadline - Date.now())]);
@@ -350,7 +358,7 @@ export async function withFileLocks<T>(
       for (const p of held.reverse()) unlock(p);
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for ${label} OAuth refresh lock`);
+      throw new LockTimeoutError(`Timed out waiting for ${label} OAuth refresh lock`);
     }
     await delay(REFRESH_LOCK_POLL_MS);
   }
@@ -461,9 +469,10 @@ export async function refreshFileCredential(opts: {
         staleMs: STORAGE_LOCK_STALE_MS,
         nested: true,
       });
-    } catch {
+    } catch (err) {
       // the storage lock stayed held by a live writer: use the token for this call
-      return next;
+      if (err instanceof LockTimeoutError) return next;
+      throw err;
     }
   });
 }

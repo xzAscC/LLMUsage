@@ -41,6 +41,14 @@ describe("withStaleFallback", () => {
     expect(withStaleFallback(failed, prev, now).loginExpiresAt).toBeUndefined();
   });
 
+  test("a reading waiting on its agent stays waiting when stale", () => {
+    const prev: UsageSnapshot = { fetchedAt: "", severity: "ok", providers: [good()] };
+    const p = withStaleFallback({ ...failed, error: "Updates on your next Claude Code message", waiting: true }, prev, now);
+    expect(p.stale).toBe(true);
+    expect(p.waiting).toBe(true);
+    expect(p.error).toBe("Updates on your next Claude Code message");
+  });
+
   test("gives up on readings older than three days", () => {
     const old = { ...good(), fetchedAt: iso(now - 4 * 86400_000) };
     expect(withStaleFallback(failed, { fetchedAt: "", severity: "ok", providers: [old] }, now).ok).toBe(false);

@@ -12,6 +12,8 @@ Rectangle {
 
     readonly property bool ok: !!provider.ok
     readonly property bool stale: !!provider.stale
+    // the token expired while its agent runs: not an error, the agent refreshes it on its next request
+    readonly property bool waiting: !!provider.waiting
     readonly property var meters: (provider.windows || []).filter(w => w.usedPercent != null || w.note === "unlimited")
     readonly property var chips: buildChips()
 
@@ -151,7 +153,7 @@ Rectangle {
                 implicitWidth: 7
                 implicitHeight: 7
                 radius: 3.5
-                color: !card.ok ? card.skin.critical : card.stale ? card.skin.warming : card.skin.healthy
+                color: card.waiting ? card.skin.faint : !card.ok ? card.skin.critical : card.stale ? card.skin.warming : card.skin.healthy
             }
         }
 
@@ -208,9 +210,9 @@ Rectangle {
             Layout.fillWidth: true
             implicitHeight: errText.implicitHeight + 14
             radius: 7
-            color: card.skin.alpha(card.skin.critical, 0.10)
+            color: card.skin.alpha(card.waiting ? card.skin.faint : card.skin.critical, 0.10)
             border.width: 1
-            border.color: card.skin.alpha(card.skin.critical, 0.30)
+            border.color: card.skin.alpha(card.waiting ? card.skin.faint : card.skin.critical, 0.30)
             StyledText {
                 id: errText
                 anchors.fill: parent
@@ -232,8 +234,13 @@ Rectangle {
             spacing: 4
             StyledText {
                 visible: card.stale
-                text: "couldn't refresh · as of " + card.skin.ago(card.provider.asOf)
-                color: card.skin.warming
+                text: card.waiting
+                    ? card.provider.error + " · " + card.skin.ago(card.provider.asOf)
+                    : "couldn't refresh · as of " + card.skin.ago(card.provider.asOf)
+                color: card.waiting ? card.skin.faint : card.skin.warming
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                Layout.fillWidth: true
                 font.pixelSize: 11
             }
         }

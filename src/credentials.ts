@@ -1,6 +1,5 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   type AuthFile,
   type OAuthCredential,
@@ -17,14 +16,13 @@ import {
   type OAuthRefresher,
 } from "./oauth-refresh.ts";
 import {
-  cacheDir,
   claudeCredentialsPath,
   codexAuthPath,
   grokAuthPath,
   opencodeAuthPath,
   piAuthPath,
 } from "./paths.ts";
-import { isAnyRunning, runningExes } from "./procs.ts";
+import { isAnyRunning } from "./procs.ts";
 
 /**
  * Credentials are read from the agents you already log into — Claude Code,
@@ -62,11 +60,6 @@ export interface OAuthSource {
   plan?: string;
   /** OIDC client id stored next to the token (Grok CLI). */
   clientId?: string;
-  /**
-   * Safe to refresh while the owner runs: we take the owner's own refresh
-   * lock, and the owner re-reads the file under that lock (Claude Code).
-   */
-  refreshWhileRunning?: () => boolean;
   /**
    * The refresh token does not rotate (Google): while the owner runs, a fresh
    * access token can be got for our own call and thrown away, without
@@ -149,9 +142,9 @@ function writeClaudeCode(path: string, next: OAuthCredential): void {
 
 /**
  * Claude Code's own refresh locks (2.1.x): `<config dir>/.oauth_refresh.lock`,
- * then the legacy `<config dir>.lock`, both mkdir-style. Every Claude Code
- * session takes them before refreshing and re-reads the credentials file
- * inside, so holding them makes us one more session, not a rival.
+ * then the legacy `<config dir>.lock`, both mkdir-style. We refresh only while
+ * no `claude` runs; holding its locks makes a session that starts meanwhile
+ * wait and then re-read the file, instead of spending the same refresh token.
  */
 export function claudeCodeLockPaths(credPath: string): string[] {
   const dir = dirname(credPath);
@@ -164,69 +157,6 @@ export function claudeCodeLockPaths(credPath: string): string[] {
   return [join(dir, ".oauth_refresh.lock"), `${real}.lock`];
 }
 
-/**
- * Oldest Claude Code seen to take both locks and re-read the file inside them
- * (the strings are in the 2.1.328–2.1.330 binaries; strace on 2.1.330).
- */
-const CLAUDE_SHARED_LOCK_SINCE = [2, 1, 328] as const;
-
-/** Lock files the protocol depends on; a build whose binary lacks them is not trusted with it. */
-const CLAUDE_LOCK_MARKERS = [".oauth_refresh.lock", ".storage-write.lock"];
-
-/**
- * Does this Claude Code binary still name the locks we take? A build that
- * renamed them would not see ours. Checked once per binary (grep stops at
- * the first hit) and remembered in the cache dir by path, size and mtime.
- */
-function buildNamesLocks(exe: string): boolean {
-  let key: string;
-  try {
-    const st = statSync(exe);
-    key = `${exe}|${st.size}|${st.mtimeMs}`;
-  } catch {
-    return false;
-  }
-  const file = join(cacheDir(), "claude-builds.json");
-  let known: Record<string, boolean> = {};
-  try {
-    known = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    // first check
-  }
-  if (typeof known[key] === "boolean") return known[key]!;
-  // grep: 0 = found, 1 = not found; anything else (killed, unreadable) is no
-  // answer, so it says "wait" now and is not remembered
-  const answers = CLAUDE_LOCK_MARKERS.map(
-    (m) => spawnSync("grep", ["-q", "-a", "-F", "--", m, exe], { stdio: "ignore" }).status,
-  );
-  if (answers.some((a) => a !== 0 && a !== 1)) return false;
-  const ok = answers.every((a) => a === 0);
-  try {
-    mkdirSync(cacheDir(), { recursive: true });
-    writeFileSync(file, JSON.stringify({ ...known, [key]: ok }));
-  } catch {
-    // best effort
-  }
-  return ok;
-}
-
-/**
- * Every running `claude` is a native Claude Code build (…/versions/X.Y.Z),
- * at least CLAUDE_SHARED_LOCK_SINCE, whose binary still names the locks.
- * Anything else (an older or changed build, an npm install, a process we
- * cannot read) and we wait for it to refresh, as before.
- */
-export function claudeSharesLock(exes = runningExes("claude")): boolean {
-  return [...new Set(exes)].every((exe) => {
-    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(basename(exe));
-    if (!m) return false;
-    const v = m.slice(1).map(Number);
-    const floor = CLAUDE_SHARED_LOCK_SINCE;
-    const recent = v[0] !== floor[0] ? v[0]! > floor[0] : v[1] !== floor[1] ? v[1]! > floor[1] : v[2]! >= floor[2];
-    return recent && buildNamesLocks(exe);
-  });
-}
-
 export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | null {
   const found = readClaudeCode(path);
   if (!found) return null;
@@ -236,7 +166,6 @@ export function claudeCodeSource(path = claudeCredentialsPath()): OAuthSource | 
     path,
     cred: found.cred,
     plan: found.plan,
-    refreshWhileRunning: () => claudeSharesLock(),
     refresh: (refresher, force) =>
       refreshFileCredential({
         requested: found.cred,
@@ -512,6 +441,19 @@ export function isAuthError(err: unknown): boolean {
 export class CredentialError extends Error {}
 
 /**
+ * The card's note while the token has expired and its agent runs: we leave
+ * the refresh to the agent (a rotating refresh token must have one user), and
+ * the agent does it on its next request.
+ */
+export function waitingNote(agent: string): string {
+  return `Updates on your next ${agent} message`;
+}
+
+export function isWaitingNote(error?: string): boolean {
+  return !!error && error.startsWith("Updates on your next ");
+}
+
+/**
  * Try each source in order (unexpired first). An expired token is refreshed
  * only when its owner process is idle; otherwise it is tried as-is and the
  * owner is expected to rotate it the next time it runs.
@@ -540,7 +482,7 @@ export async function callWithOAuth<T>(
       !ended &&
       refresher &&
       source.cred.refresh &&
-      (!ownerRunning(source.owner) || !!source.refreshWhileRunning?.())
+      !ownerRunning(source.owner)
     );
     let cred = source.cred;
 
@@ -579,8 +521,8 @@ export async function callWithOAuth<T>(
         }
       }
       problems.push(
-        ownerRunning(source.owner) && !source.refreshWhileRunning?.()
-          ? `${source.label}: token rejected (${source.label} is running and will refresh it on next use)`
+        ownerRunning(source.owner)
+          ? waitingNote(OWNER_LABEL[source.owner])
           : `${source.label}: token rejected — log in again`,
       );
     }

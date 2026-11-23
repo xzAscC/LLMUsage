@@ -27,7 +27,7 @@ const BAD = "✗";
 
 function oauthLine(s: OAuthSource): string {
   const running = ownerRunning(s.owner);
-  const waits = running && !s.refreshWhileRunning?.();
+  const waits = running && !s.refreshInMemory;
   let state: string;
   if (loginEnded(s.cred)) state = "login expired — run /login";
   else if (s.cred.expires == null) state = "no expiry recorded";
@@ -35,7 +35,7 @@ function oauthLine(s: OAuthSource): string {
     state = waits
       ? `expired — ${s.label} is running, it refreshes on next use`
       : s.cred.refresh
-        ? `expired — will refresh${running ? ` (under ${s.label}'s lock)` : ` (${s.label} idle)`}`
+        ? `expired — will refresh${running ? " for each call, leaving its file alone" : ` (${s.label} idle)`}`
         : "expired, no refresh token — log in again";
   } else state = `valid ${formatDuration((s.cred.expires - Date.now()) / 1000)}`;
   if (s.cred.refreshExpires && !loginEnded(s.cred)) {
@@ -54,7 +54,7 @@ export async function runDoctor(): Promise<string> {
   const stores = loadStores();
   const cfg = loadConfig();
 
-  out.push("Credentials (first store with a login is used; refresh only while its agent is idle, or under Claude Code's own lock)");
+  out.push("Credentials (first store with a login is used; refresh only while its agent is idle)");
   const groups: [string, string[]][] = [
     ["Claude", anthropicSources(stores).map(oauthLine)],
     ...cfg.claude.accounts.map((a): [string, string[]] => [`Claude ${a.name}`, claudeAccountSources(a).map(oauthLine)]),
