@@ -2,7 +2,6 @@ import type { AuthFile } from "../auth.ts";
 import {
   antigravitySources,
   callWithOAuth,
-  CredentialError,
   loadStores,
   shortMessage,
   type OAuthSource,
@@ -134,9 +133,6 @@ export function windowsFromSummary(summary: QuotaSummary): UsageWindow[] {
 }
 
 function shortError(err: unknown): string {
-  if (err instanceof CredentialError && err.message === "no credentials") {
-    return "No Antigravity OAuth — run /login antigravity in pi";
-  }
   if (/SUBSCRIPTION_REQUIRED/i.test(String(err))) {
     return "Quota summary needs a paid Google AI plan";
   }
